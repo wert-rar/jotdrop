@@ -1353,3 +1353,44 @@
   width: 100%;
   font-family: var(--font-monospace);
 }
+
+/* Local compact editor and Markdown preview. */
+.modal.jotdrop-compact-modal { padding: 12px; }
+.jotdrop-compact-modal .modal-title { margin-bottom: 8px; padding-right: 24px; }
+.jotdrop-compact-modal .modal-content { margin-top: 0; }
+.jotdrop-compact-modal .jotdrop-edit-controls { gap: 6px; margin-bottom: 18px; padding-bottom: 10px; }
+.jotdrop-compact-modal .jotdrop-edit-colorrow { gap: 6px; }
+.jotdrop-compact-modal .jotdrop-edit-swatches { gap: 5px; }
+.jotdrop-compact-modal .jotdrop-edit-swatch { width: 20px; height: 20px; }
+.jotdrop-compact-modal .jotdrop-compact-actions { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.jotdrop-compact-modal .jotdrop-icon-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; min-width: 0; padding: 5px; border-radius: 6px; cursor: pointer; box-sizing: border-box; }
+.jotdrop-icon-button svg { width: 16px; height: 16px; }
+.jotdrop-compact-modal .jotdrop-edit-tagrow { flex: 1; min-width: 64px; gap: 0; }
+.jotdrop-compact-modal .jotdrop-edit-chips { flex-wrap: nowrap; overflow-x: auto; gap: 3px; }
+.jotdrop-compact-modal .jotdrop-edit-chip { flex-shrink: 0; padding: 2px 5px; font-size: 11px; }
+.jotdrop-compact-modal .jotdrop-edit-taginput { min-width: 64px; width: 80px; height: 28px; padding: 3px 6px; }
+.jotdrop-compact-modal .jotdrop-edit-title { margin-bottom: 8px; padding: 7px 8px; font-size: 20px; font-weight: 700; height: auto; line-height: 1.3; }
+.jotdrop-compact-modal .jotdrop-edit-body { padding: 8px; }
+.jotdrop-compact-modal .jotdrop-edit-footer { margin-top: 6px; gap: 6px; }
+.jotdrop-compact-modal .jotdrop-edit-footer button { padding: 4px 8px; height: auto; min-height: 26px; font-size: 12px; line-height: 18px; }
+.jotdrop-reminder-popup { position: relative; flex: 0 0 28px; }
+.jotdrop-reminder-popup summary { list-style: none; }
+.jotdrop-reminder-popup summary::-webkit-details-marker { display: none; }
+.jotdrop-reminder-popup summary.is-active { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.jotdrop-reminder-panel { position: absolute; top: 32px; left: -112px; z-index: 20; padding: 10px; width: 250px; max-width: 80vw; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-primary); box-shadow: var(--shadow-s); }
+.jotdrop-live-editor { height: clamp(240px, 52vh, 620px); min-height: 0; border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow: hidden; }
+.jotdrop-live-editor .markdown-source-view { height: 100%; padding: 0; }
+.jotdrop-live-editor .cm-editor { height: 100%; }
+.jotdrop-live-editor .cm-scroller { overflow: auto; padding: 8px; }
+.jotdrop-live-editor .cm-sizer { min-height: 100%; }
+.jotdrop-live-editor .cm-content { padding: 0; }
+.jotdrop-live-editor .cm-contentContainer { padding-bottom: 24px; }
+.jotdrop-card-preview.markdown-rendered { white-space: normal; display: block; max-height: 320px; overflow: hidden; -webkit-line-clamp: unset; }
+.jotdrop-card-preview.markdown-rendered > :first-child, .jotdrop-edit-preview > :first-child { margin-top: 0; }
+.jotdrop-card-preview.markdown-rendered p { margin: 0 0 0.6em; }
+.jotdrop-card-preview.markdown-rendered :is(ul,ol) { padding-inline-start: 1.5em; margin-block: 0.5em; }
+.jotdrop-card-preview.markdown-rendered pre { white-space: pre-wrap; }
+.jotdrop-card-preview.markdown-rendered table { font-size: 0.85em; }
+.jotdrop-card.is-dragging { opacity: 0.4; }
+.jotdrop-card.jotdrop-drop-before { box-shadow: 0 -4px 0 var(--interactive-accent); }
+.jotdrop-card.jotdrop-drop-after { box-shadow: 0 4px 0 var(--interactive-accent); }

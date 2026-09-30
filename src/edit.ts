@@ -101,7 +101,7 @@ export class EditNoteModal extends Modal {
 
     const raw = await this.app.vault.read(this.file);
     const rawBody = stripFrontmatter(raw).replace(/^\n+/, "");
-    const { textPart, embeds } = splitBodyAndEmbeds(rawBody);
+    const { textPart, embeds } = { textPart: rawBody, embeds: [] as string[] };
     // Split off the explicit title (first `# heading`). No heading → empty
     // title and the card keeps deriving one from the first words of the body.
     const { title, body, level } = splitHeadingTitle(textPart);
