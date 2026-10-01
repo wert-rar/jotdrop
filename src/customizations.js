@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 
 const taskMarkdown = new MarkdownIt({ html: true });
 
-export function installJotDropCustomizations({ EditModal, View, obsidian, t, stripFrontmatter }) {
+export function installJotDropCustomizations({ EditModal, CaptureModal, View, obsidian, t, stripFrontmatter }) {
   const { Component, MarkdownRenderer, Notice, setIcon, normalizePath } = obsidian;
   const icon = (button, name, label) => {
     button.replaceChildren();
@@ -75,9 +75,7 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
 
   EditModal.prototype.renderNavHeader = function () {};
   EditModal.prototype.registerNavHandlers = function () {};
-  const controls = EditModal.prototype.renderControls;
-  EditModal.prototype.renderControls = function (container) {
-    controls.call(this, container);
+  function compactControls(container, allowArchive) {
     const row = container.querySelector('.jotdrop-edit-row');
     row.classList.add('jotdrop-compact-actions');
     const buttons = row.querySelectorAll('button');
@@ -101,18 +99,20 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
       this.syncDraft();
     });
 
-    const archiveFolder = normalizePath(this.plugin.settings.archiveFolder).replace(/\/$/, '');
-    const archived = this.file.path.startsWith(archiveFolder + '/');
-    const archive = icon(row.createEl('button'), archived ? 'archive-restore' : 'archive', t(archived ? 'action_unarchive' : 'action_archive'));
-    archive.addEventListener('click', run(async () => {
-      archive.disabled = true;
-      try {
-        if (!await this.persist()) return;
-        const oldPath = this.file.path;
-        await View.prototype.toggleArchive.call({ app: this.app, plugin: this.plugin }, this.file, archived);
-        if (this.file.path !== oldPath) this.close();
-      } finally { archive.disabled = false; }
-    }));
+    if (allowArchive) {
+      const archiveFolder = normalizePath(this.plugin.settings.archiveFolder).replace(/\/$/, '');
+      const archived = this.file.path.startsWith(archiveFolder + '/');
+      const archive = icon(row.createEl('button'), archived ? 'archive-restore' : 'archive', t(archived ? 'action_unarchive' : 'action_archive'));
+      archive.addEventListener('click', run(async () => {
+        archive.disabled = true;
+        try {
+          if (!await this.persist()) return;
+          const oldPath = this.file.path;
+          await View.prototype.toggleArchive.call({ app: this.app, plugin: this.plugin }, this.file, archived);
+          if (this.file.path !== oldPath) this.close();
+        } finally { archive.disabled = false; }
+      }));
+    }
 
     const reminder = container.querySelector('.jotdrop-reminder-row');
     const popup = row.createEl('details', { cls: 'jotdrop-reminder-popup' });
@@ -135,6 +135,18 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
     this.tagInputEl.setAttribute('aria-label', t('label_tags'));
     row.appendChild(tags);
     container.querySelectorAll('[title][aria-label]').forEach(element => element.removeAttribute('title'));
+  }
+  const controls = EditModal.prototype.renderControls;
+  EditModal.prototype.renderControls = function (container) {
+    controls.call(this, container);
+    compactControls.call(this, container, true);
+  };
+  const captureControls = CaptureModal.prototype.renderControls;
+  CaptureModal.prototype.renderControls = function (container) {
+    captureControls.call(this, container);
+    const bar = container.querySelector('.jotdrop-capture-controls');
+    bar.classList.add('jotdrop-edit-controls');
+    compactControls.call(this, bar, false);
   };
   let NativeEditor;
   function createLiveEditor(modal, container) {
@@ -155,7 +167,7 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
       } finally { probe.unload(); }
     }
     const owner = {
-      app:modal.app, file:modal.file, containerEl:container, editor:null, editMode:null,
+      app:modal.app, file:modal.file || null, containerEl:container, editor:null, editMode:null,
       getMode:()=>'source', syncScroll:()=>{}, onMarkdownScroll:()=>{},
       saveImmediately:async()=>modal.syncDraft(),
       toggleMode:()=>{}, showSearch:()=>modal.liveEditor.showSearch()
@@ -175,6 +187,38 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
     });
     return native;
   }
+  function registerDraftHotkeys(modal) {
+    for (const binding of modal.draftHotkeys || []) modal.scope.unregister(binding);
+    modal.draftHotkeys = [];
+    const { commands, hotkeyManager } = modal.app;
+    // Modal scopes do not inherit Obsidian's app scope. Forward only editor
+    // commands, using the user's bindings and honoring explicitly disabled keys.
+    for (const id of Object.keys(commands?.editorCommands || {})) {
+      if (!id.startsWith('editor:')) continue;
+      const hotkeys = hotkeyManager.getHotkeys(id) ?? hotkeyManager.getDefaultHotkeys(id) ?? [];
+      for (const hotkey of hotkeys) {
+        if (!hotkey.key) continue;
+        const binding = modal.scope.register(hotkey.modifiers, hotkey.key, event => {
+          if (!modal.liveEditorEl.contains(modal.liveEditorEl.ownerDocument.activeElement)) return;
+          if (event.repeat && !commands.editorCommands[id].repeatable) return false;
+          modal.app.workspace.activeEditor = modal.liveEditor.owner;
+          commands.executeCommandById(id, event);
+          modal.syncDraft();
+          return false;
+        });
+        modal.draftHotkeys.push(binding);
+      }
+    }
+    modal.draftHotkeys.push(modal.scope.register(['Mod'], 'Enter', () => { void modal.save(); return false; }));
+  }
+  function closeLiveEditor(modal) {
+    for (const binding of modal.draftHotkeys || []) modal.scope.unregister(binding);
+    modal.draftHotkeys = [];
+    if (!modal.liveEditor) return;
+    if (modal.app.workspace.activeEditor === modal.liveEditor.owner) modal.app.workspace.activeEditor = modal.previousActiveEditor;
+    modal.liveEditor.unload();
+    modal.liveEditor = null;
+  }
   const layout = EditModal.prototype.buildLayout;
   EditModal.prototype.buildLayout = function () {
     layout.call(this);
@@ -182,7 +226,7 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
     this.liveEditorEl = this.contentEl.createDiv({cls:'jotdrop-live-editor'});
     this.bodyEl.replaceWith(this.liveEditorEl);
     this.liveEditor = createLiveEditor(this, this.liveEditorEl);
-    this.scope.register(['Mod'], 'Enter', () => { void this.save(); return false; });
+    registerDraftHotkeys(this);
   };
   EditModal.prototype.syncDraft = function () {
     this.state.body = this.liveEditor.get();
@@ -200,12 +244,41 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
   };
   const closeEdit = EditModal.prototype.onClose;
   EditModal.prototype.onClose = function () {
-    if (this.liveEditor) {
-      if (this.app.workspace.activeEditor === this.liveEditor.owner) this.app.workspace.activeEditor = this.previousActiveEditor;
-      this.liveEditor.unload();
-      this.liveEditor = null;
-    }
+    closeLiveEditor(this);
     closeEdit.call(this);
+  };
+
+  const openCapture = CaptureModal.prototype.onOpen;
+  CaptureModal.prototype.onOpen = function () {
+    this.state.body = '';
+    openCapture.call(this);
+    this.modalEl.classList.add('jotdrop-compact-modal');
+    this.liveEditorEl = this.contentEl.createDiv({ cls:'jotdrop-live-editor' });
+    this.textArea.replaceWith(this.liveEditorEl);
+    this.contentEl.querySelector('.jotdrop-capture-hint').remove();
+    this.contentEl.querySelector('.jotdrop-capture-footer').classList.add('jotdrop-edit-footer');
+    this.liveEditor = createLiveEditor(this, this.liveEditorEl);
+    registerDraftHotkeys(this);
+    this.liveEditor.editor.focus();
+  };
+  CaptureModal.prototype.syncDraft = function () {
+    this.state.body = this.liveEditor.get();
+    this.textArea.value = this.state.body;
+  };
+  CaptureModal.prototype.insertLinkAtCursor = EditModal.prototype.insertLinkAtCursor;
+  const saveCapture = CaptureModal.prototype.save;
+  CaptureModal.prototype.save = async function () {
+    if (this.savingDraft) return;
+    this.savingDraft = true;
+    try {
+      this.syncDraft();
+      return await saveCapture.call(this);
+    } finally { this.savingDraft = false; }
+  };
+  const closeCapture = CaptureModal.prototype.onClose;
+  CaptureModal.prototype.onClose = function () {
+    closeLiveEditor(this);
+    closeCapture.call(this);
   };
 
   const collect = View.prototype.collectCards;

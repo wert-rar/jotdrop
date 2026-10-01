@@ -55,7 +55,18 @@ const assert = require('node:assert/strict');
           this.app = app; this.modalEl = document.body.createDiv({cls:'modal'});
           this.titleEl = this.modalEl.createDiv({cls:'modal-title'});
           this.contentEl = this.modalEl.createDiv({cls:'modal-content'});
-          this.scope = { register() {} };
+          const handlers = [];
+          this.scope = {
+            register(modifiers, key, callback) { const binding = { modifiers, key, callback }; handlers.push(binding); return binding; },
+            unregister(binding) { const index = handlers.indexOf(binding); if (index >= 0) handlers.splice(index, 1); }
+          };
+          this.modalEl.addEventListener('keydown', event => {
+            const binding = handlers.find(item => item.key?.toLowerCase() === event.key.toLowerCase()
+              && item.modifiers.includes('Mod') === (event.ctrlKey || event.metaKey)
+              && item.modifiers.includes('Shift') === event.shiftKey
+              && item.modifiers.includes('Alt') === event.altKey);
+            if (binding?.callback(event) === false) event.preventDefault();
+          });
         }
         close() { this.onClose(); this.modalEl.remove(); }
       }
@@ -98,7 +109,7 @@ const assert = require('node:assert/strict');
       };
     });
     const installed = fs.readFileSync('main.js', 'utf8');
-    await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,View:module.exports.JotDropView};' });
+    await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
     const result = await page.evaluate(async () => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
@@ -117,7 +128,21 @@ const assert = require('node:assert/strict');
         fileManager: {
           processFrontMatter:async(file,callback)=>{writes.push(file.path); callback(metadata.get(file));if(plugin.suppressedPaths.has(file.path))plugin.suppressedPaths.delete(file.path);else plugin.refreshViews();},
           renameFile:async(file,newPath)=>{file.path=newPath;}
-        }, workspace:{openLinkText:async()=>{}},embedRegistry:{embedByExtension:{md:editorProbe}}
+        }, workspace:{openLinkText:async()=>{}},embedRegistry:{embedByExtension:{md:editorProbe}},
+        hotkeyManager: {
+          getHotkeys: id => id === 'editor:insert-codeblock' ? [{modifiers:['Mod'],key:'K'}] : id === 'editor:toggle-highlight' ? [] : undefined,
+          getDefaultHotkeys: id => ({'editor:toggle-bold':[{modifiers:['Mod'],key:'B'}],'editor:toggle-italics':[{modifiers:['Mod'],key:'I'}],'editor:toggle-highlight':[{modifiers:['Mod'],key:'H'}]})[id]
+        },
+        commands: {
+          editorCommands: {'editor:toggle-bold':{},'editor:toggle-italics':{},'editor:toggle-highlight':{},'editor:insert-codeblock':{}},
+          executeCommandById: id => {
+            const active = app.workspace.activeEditor;
+            if (!active || active.getMode() !== 'source') return false;
+            const markers = {'editor:toggle-bold':'**','editor:toggle-italics':'*','editor:toggle-highlight':'==','editor:insert-codeblock':'```'};
+            active.editor.setValue(markers[id] + active.editor.getValue() + markers[id]);
+            return true;
+          }
+        }
       };
       let refreshes = 0;
       const plugin = {settings:{notesFolder:'Grail',archiveFolder:'Grail/Archive',sortMode:'modified-desc',showArchived:false},saveSettings:async()=>{},refreshViews:()=>{refreshes++;},resolveAssetCandidates:()=>[],suppressedPaths:new Set(),suppressModifyOnce(path){this.suppressedPaths.add(path);}};
@@ -330,6 +355,21 @@ const assert = require('node:assert/strict');
       assert(!note.contentEl.querySelector('.jotdrop-edit-nav'),'navigation removed');
       assert(note.liveEditor.sourceMode===false&&note.liveEditorEl.querySelector('[contenteditable]'),'native editor is editable Live Preview');
       assert(note.liveEditor.get()==='**bold**\n\n- [ ] task','native editor receives intact Markdown');
+      const hotkey = (modal, key) => modal.liveEditor.content.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey:true, bubbles:true, cancelable:true }));
+      const originalDraft = note.liveEditor.get();
+      note.liveEditor.editor.setValue('format me'); note.liveEditor.editor.focus();
+      hotkey(note, 'b');
+      assert(note.state.body === '**format me**', 'Ctrl+B formats the draft inside the modal');
+      hotkey(note, 'i');
+      assert(note.state.body === '***format me***', 'Ctrl+I formats the draft inside the modal');
+      hotkey(note, 'k');
+      assert(note.state.body === '```***format me***```', 'custom formatting hotkeys use the Obsidian command');
+      hotkey(note, 'h');
+      assert(note.state.body === '```***format me***```', 'explicitly disabled hotkeys stay disabled');
+      note.titleInputEl.focus();
+      note.titleInputEl.dispatchEvent(new KeyboardEvent('keydown', { key:'b',ctrlKey:true,bubbles:true }));
+      assert(note.state.body === '```***format me***```', 'formatting shortcuts do not alter the body while typing a title');
+      note.liveEditor.editor.setValue(originalDraft);
       const actions = note.contentEl.querySelector('.jotdrop-compact-actions');
       assert(actions.querySelector('.jotdrop-edit-tagrow'),'tags inline');
       assert(actions.querySelector('details .jotdrop-reminder-row'),'reminder inside popup');
@@ -396,6 +436,39 @@ const assert = require('node:assert/strict');
       const saved=text.get(files[1]);
       preview.liveEditor.editor.setValue('Discard me');preview.close();
       assert(text.get(files[1])===saved,'Cancel/close discards native draft');
+      const originalActiveEditor = {getMode:()=> 'source'};
+      app.workspace.activeEditor = originalActiveEditor;
+      const capture = new fixtureClasses.CaptureModal(app,plugin);
+      capture.onOpen();
+      assert(capture.modalEl.classList.contains('jotdrop-compact-modal'), 'new-note modal uses the compact editor design');
+      assert(capture.liveEditor.sourceMode === false && !capture.textArea.isConnected, 'new-note modal replaces textarea with native Live Preview');
+      assert(capture.liveEditor.owner.file === null, 'new-note draft is not attached to a vault file');
+      assert(capture.contentEl.querySelector('.jotdrop-compact-actions .jotdrop-edit-tagrow'), 'new-note tags use the shared compact controls');
+      assert(!capture.contentEl.querySelector('[data-icon="archive"]'), 'new-note draft has no archive action before creation');
+      assert(!capture.contentEl.querySelector('.jotdrop-capture-hint'), 'new-note modal removes the extra hint row');
+      capture.liveEditor.editor.setValue('new draft');
+      hotkey(capture, 'b');
+      assert(capture.state.body === '**new draft**' && capture.textArea.value === '**new draft**', 'new-note hotkeys format and synchronize the draft');
+      const countBeforeCancel = files.length;
+      const captureEditor = capture.liveEditor;
+      capture.close();
+      assert(files.length === countBeforeCancel && captureEditor.destroyed, 'cancelled new note creates no file and releases editor');
+      assert(app.workspace.activeEditor === originalActiveEditor, 'closing new-note editor restores the previous active editor');
+      const create = new fixtureClasses.CaptureModal(app,plugin); create.onOpen();
+      create.titleInputEl.value = 'New note'; create.liveEditor.editor.setValue('**bold**\n\n- [ ] task');
+      const originalCreate = app.vault.create;
+      const originalAbstractFile = app.vault.getAbstractFileByPath;
+      app.vault.getAbstractFileByPath = () => null;
+      app.vault.create = async (path, content) => {
+        const file = {path,name:path.split('/').at(-1),basename:'New note',stat:{mtime:100,ctime:100}};
+        files.push(file); text.set(file, content); metadata.set(file, {}); return file;
+      };
+      const createdEditor = create.liveEditor;
+      await Promise.all([create.save(),create.save()]);
+      assert(files.length === countBeforeCancel + 1, 'repeated save creates exactly one new note');
+      assert(text.get(files.at(-1)) === '# New note\n\n**bold**\n\n- [ ] task', 'new-note save preserves title and native Markdown draft');
+      assert(createdEditor.destroyed, 'new-note save closes and releases editor');
+      app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
       return { checks, notices, writes:writes.length };
     });

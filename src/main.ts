@@ -19,9 +19,9 @@ import { EditNoteModal } from "./edit";
 import { stripFrontmatter } from "./metadata";
 import { installJotDropCustomizations } from "./customizations.js";
 
-installJotDropCustomizations({ EditModal: EditNoteModal, View: JotDropView, obsidian, t, stripFrontmatter });
+installJotDropCustomizations({ EditModal: EditNoteModal, CaptureModal: QuickCaptureModal, View: JotDropView, obsidian, t, stripFrontmatter });
 // Stable exports let regressions exercise the production bundle without minified names.
-export { EditNoteModal, JotDropView };
+export { EditNoteModal, QuickCaptureModal, JotDropView };
 export { extractPreview } from "./view";
 
 export default class JotDropPlugin extends Plugin {
