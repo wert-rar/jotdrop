@@ -305,20 +305,23 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     this.orderCards = cards;
     return cards;
   };
-  View.prototype.moveCard = function (sourcePath, targetPath, after) {
-    const execute = () => this.performCardMove(sourcePath, targetPath, after);
+  View.prototype.moveCard = function (sourcePath, targetPath, after, columnTarget) {
+    const execute = () => this.performCardMove(sourcePath, targetPath, after, columnTarget);
     const operation = this.orderQueue ? this.orderQueue.then(execute, execute) : execute();
     this.orderQueue = operation;
     return operation;
   };
   // Keep the current compact stacks when dropping: the chosen column outranks
   // global height balancing. Save one layout snapshot, not every note's metadata.
-  View.prototype.captureCardPlacement = function (sourcePath, targetPath, after) {
+  View.prototype.captureCardPlacement = function (sourcePath, targetPath, after, columnTarget) {
     const nodes=[...this.gridEl.querySelectorAll('.jotdrop-card')];
     const target=nodes.find(node=>node.dataset.path===targetPath);
-    if (!target) return null;
+    const destination=columnTarget
+      ? [...this.gridEl.querySelectorAll('.jotdrop-grid-inner')].find(inner=>inner.dataset.pinned===String(columnTarget.pinned) && inner.children.length===columnTarget.count)?.children[columnTarget.index]
+      : target?.parentElement;
+    if (!destination) return null;
     const source=nodes.find(node=>node.dataset.path===sourcePath);
-    const columns=[...target.parentElement.parentElement.children];
+    const columns=[...destination.parentElement.children];
     const previous=this.plugin.settings.cardLayout;
     const paths=new Set(this.orderCards.map(card=>card.file.path));
     const saved=previous?.columnCount===columns.length ? Object.fromEntries(Object.entries(previous.columns).filter(([path])=>paths.has(path))) : {};
@@ -327,13 +330,13 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
         for (const node of column.children) saved[node.dataset.path]=index;
       });
     }
-    saved[sourcePath]=columns.indexOf(target.parentElement);
+    saved[sourcePath]=columns.indexOf(destination);
     return {
       layout:{columnCount:columns.length,columns:saved},
-      unchanged:source && (after ? target.nextElementSibling===source : target.previousElementSibling===source)
+      unchanged:source && (columnTarget ? source.parentElement===destination && destination.lastElementChild===source : after ? target.nextElementSibling===source : target.previousElementSibling===source)
     };
   };
-  View.prototype.performCardMove = async function (sourcePath, targetPath, after) {
+  View.prototype.performCardMove = async function (sourcePath, targetPath, after, columnTarget) {
     if (sourcePath === targetPath) return;
     this.reordering = true;
     const previousLayout=this.plugin.settings.cardLayout;
@@ -342,23 +345,24 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       const cards = this.orderCards || await this.collectCards();
       const source = cards.find(card => card.file.path === sourcePath);
       const target = cards.find(card => card.file.path === targetPath);
-      if (!source || !target) throw new Error('A dragged note has moved or disappeared. Refresh the board.');
-      const placement=this.captureCardPlacement(sourcePath,targetPath,after);
+      const placement=this.captureCardPlacement(sourcePath,targetPath,after,columnTarget);
+      if (!source || (!target && !columnTarget) || (columnTarget && !placement)) throw new Error('A dragged note has moved or disappeared. Refresh the board.');
       if (placement?.unchanged) return;
-      const group = cards.filter(card => card !== source && card.meta.pinned === target.meta.pinned);
-      group.splice(group.indexOf(target) + Number(after), 0, source);
-      const previousGroup = cards.filter(card=>card.meta.pinned===target.meta.pinned);
+      const pinned = columnTarget ? columnTarget.pinned : target.meta.pinned;
+      const group = cards.filter(card => card !== source && card.meta.pinned === pinned);
+      group.splice(target ? group.indexOf(target) + Number(after) : group.length, 0, source);
+      const previousGroup = cards.filter(card=>card.meta.pinned===pinned);
       if (!placement && group.length===previousGroup.length && group.every((card,index)=>card===previousGroup[index])) return;
       const index = group.indexOf(source);
       const left = index ? group[index-1].order : null;
       const right = index < group.length-1 ? group[index+1].order : null;
-      const order = left === null ? right - 1024 : right === null ? left + 1024 : left + (right-left)/2;
+      const order = left === null && right === null ? 0 : left === null ? right - 1024 : right === null ? left + 1024 : left + (right-left)/2;
       const ranksValid = group.filter(card=>card!==source).every((card,index,array)=>Number.isFinite(card.order) && (!index || card.order>array[index-1].order));
       const sparse = ranksValid && Number.isFinite(order) && (left===null || order>left) && (right===null || order<right);
       const changed = sparse ? [source] : group;
       if (sparse) source.order = order;
       else group.forEach((card,index)=>{card.order=index*1024;});
-      source.meta.pinned = target.meta.pinned;
+      source.meta.pinned = pinned;
       cards.sort((a,b)=>a.order-b.order);
       this.lastFiltered = cards.filter(card=>this.matchesFilters(card));
       if (placement) this.plugin.settings.cardLayout=placement.layout;
@@ -369,7 +373,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
         try {
           await this.app.fileManager.processFrontMatter(card.file, frontmatter => {
             frontmatter.jotdrop_order = card.order;
-            if (card === source) frontmatter.pinned = target.meta.pinned;
+            if (card === source) frontmatter.pinned = pinned;
           });
         } catch (error) {
           this.plugin.suppressedPaths.delete(card.file.path);
@@ -477,6 +481,30 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     this.masonrySizes.set(card,[card.offsetWidth,card.offsetHeight]);
     this.masonryObserver.observe(card);
   };
+  View.prototype.registerColumnDrops = function (inner) {
+    for (const column of inner.children) {
+      if (column.jotdropDropRegistered) continue;
+      column.jotdropDropRegistered = true;
+      column.addEventListener('dragover', event => {
+        if (!this.draggedPath || this.selectionMode || event.target.closest('.jotdrop-card')) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        column.classList.add('jotdrop-column-drop');
+      });
+      column.addEventListener('dragleave', () => column.classList.remove('jotdrop-column-drop'));
+      column.addEventListener('drop', run(async event => {
+        column.classList.remove('jotdrop-column-drop');
+        if (this.selectionMode || event.target.closest('.jotdrop-card')) return;
+        const source = event.dataTransfer.getData('application/x-jotdrop-note');
+        if (!source || source !== this.draggedPath) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const target = [...column.children].filter(card=>card.dataset.path!==source).at(-1);
+        if (target) await this.moveCard(source, target.dataset.path, true);
+        else await this.moveCard(source, null, false, {pinned:inner.dataset.pinned==='true',index:[...inner.children].indexOf(column),count:inner.children.length});
+      }));
+    }
+  };
   const render = View.prototype.render;
   View.prototype.render = async function () {
     if (this.reordering) { this.renderPending=true; return; }
@@ -525,6 +553,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.jotdropData=data;
     this.observeCardSize(card);
     parent.parentElement.dataset.pinned=String(data.meta.pinned);
+    this.registerColumnDrops(parent.parentElement);
     card.draggable = !this.selectionMode;
     card.addEventListener('dragstart', event => {
       if (this.selectionMode || event.target.closest('a, input, button')) { event.preventDefault(); return; }
@@ -556,7 +585,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.addEventListener('dragend', () => {
       this.draggedPath = null;
       card.classList.remove('is-dragging');
-      this.gridEl.querySelectorAll('.jotdrop-drop-before, .jotdrop-drop-after').forEach(el => el.classList.remove('jotdrop-drop-before', 'jotdrop-drop-after'));
+      this.gridEl.querySelectorAll('.jotdrop-drop-before, .jotdrop-drop-after, .jotdrop-column-drop').forEach(el => el.classList.remove('jotdrop-drop-before', 'jotdrop-drop-after', 'jotdrop-column-drop'));
       if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
     });
   };
