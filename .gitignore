@@ -11,3 +11,6 @@ BUILD-INFO.txt
 # Local agent handoffs contain machine-specific paths and operational notes.
 Hand-off/
 handoff.md
+
+# Local fixture artifacts and diagnostic logs.
+work/

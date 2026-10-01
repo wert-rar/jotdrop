@@ -1,6 +1,6 @@
 # JotDrop Source-of-Truth Gate
 
-This project has a strict version gate. Read `Hand-off/HANDOFF.md` before
+This project has a strict version gate. Read `FORK.md` before
 implementation or release work.
 
 1. Run `git fetch origin main --tags --prune` before relying on source status.
@@ -33,6 +33,6 @@ implementation or release work.
     Android release tags must exactly match `v<versionName>`. Run
     `npm run verify:tag -- <tag>` before pushing any release tag.
 
-The canonical source is `https://github.com/Diexar-Labs/jotdrop.git` at
-`origin/main`. The verified revision and unsafe checkouts are recorded in the
-handoff.
+The canonical source is `https://github.com/wert-rar/jotdrop.git` at
+`origin/main`. The upstream is `https://github.com/Diexar-Labs/jotdrop.git`.
+Fork provenance is recorded in `FORK.md`.

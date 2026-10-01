@@ -18,7 +18,8 @@
     "android:release": "node scripts/build-android-release.mjs",
     "android:test-release": "node scripts/build-android-release.mjs --test",
     "android:verify": "node scripts/verify-android-apk.mjs",
-    "android:install": "node scripts/install-android-release.mjs"
+    "android:install": "node scripts/install-android-release.mjs",
+    "check:fork": "node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs"
   },
   "keywords": [
     "obsidian",
@@ -30,17 +31,21 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Diexar-Labs/jotdrop.git"
+    "url": "https://github.com/wert-rar/jotdrop.git"
   },
   "bugs": {
-    "url": "https://github.com/Diexar-Labs/jotdrop/issues"
+    "url": "https://github.com/wert-rar/jotdrop/issues"
   },
-  "homepage": "https://github.com/Diexar-Labs/jotdrop#readme",
+  "homepage": "https://github.com/wert-rar/jotdrop#readme",
   "devDependencies": {
     "@types/node": "^20.11.0",
     "esbuild": "^0.28.2",
     "obsidian": "latest",
+    "playwright": "1.63.0",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.2"
   }
 }

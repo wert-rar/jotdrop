@@ -107,6 +107,8 @@ interface AttachmentResource {
 }
 
 export class JotDropView extends ItemView {
+  declare renderCardMarkdown: (container: HTMLElement, markdown: string, file: TFile) => void;
+  declare reflowCards: (animate?: boolean) => void;
   plugin: JotDropPlugin;
   private gridEl!: HTMLElement;
   private searchEl!: HTMLInputElement;
@@ -791,6 +793,7 @@ export class JotDropView extends ItemView {
         renderedCount++;
       }
       this.renderLimit = Math.max(this.renderLimit, renderedCount);
+      this.reflowCards();
     };
 
     renderUpTo(this.renderLimit);
@@ -1104,7 +1107,7 @@ export class JotDropView extends ItemView {
 
     if (previewText) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
-      renderInlinePreview(preview, previewText);
+      this.renderCardMarkdown(preview, previewText, file);
       preview.addEventListener("click", (e) => {
         if (this.selectionMode) {
           e.stopPropagation();
@@ -1552,28 +1555,12 @@ function extractTitle(content: string, fallback: string): string {
   return fallback;
 }
 
-/**
- * Body for the card: without frontmatter, embeds, heading lines, URLs,
- * preview-comment markers. Leading list indentation is preserved. Truncated to
- * `PREVIEW_MAX_WORDS` with "…".
- * URLs are stripped because they are shown separately as chips at the bottom.
- */
-function extractPreview(content: string): string {
-  const body = stripFrontmatter(content);
-  const stripped = body
-    .replace(/!\[\[[^\]]+\]\]/g, "")
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+/** Full Markdown body; only the leading title and internal preview markers are removed. */
+export function extractPreview(content: string): string {
+  return stripFrontmatter(content)
+    .replace(/^(?:[ \t]*\r?\n)*#{1,6}[ \t]+[^\n]*(?:\n|$)/, "")
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
-    .replace(/^\s{0,3}#+\s+.*$/gm, "")
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
-    .replace(/https?:\/\/\S+/g, "");
-  const lines = stripped
-    .split("\n")
-    .map((l) => l.trimEnd())
-    .filter((l) => l.trim().length > 0);
-  const rest = checklistToGlyphs(lines.join("\n"));
-  if (!rest) return "";
-  return truncateWords(rest, PREVIEW_MAX_WORDS, PREVIEW_MAX_CHARS);
+    .replace(/^(?:[ \t]*\r?\n)+|(?:\r?\n[ \t]*)+$/g, "");
 }
 
 /**

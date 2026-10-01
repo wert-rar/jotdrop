@@ -14,6 +14,15 @@ import {
   updateMeta,
 } from "./metadata";
 import { t } from "./i18n";
+import * as obsidian from "obsidian";
+import { EditNoteModal } from "./edit";
+import { stripFrontmatter } from "./metadata";
+import { installJotDropCustomizations } from "./customizations.js";
+
+installJotDropCustomizations({ EditModal: EditNoteModal, CaptureModal: QuickCaptureModal, View: JotDropView, obsidian, t, stripFrontmatter });
+// Stable exports let regressions exercise the production bundle without minified names.
+export { EditNoteModal, QuickCaptureModal, JotDropView };
+export { extractPreview } from "./view";
 
 export default class JotDropPlugin extends Plugin {
   settings!: JotDropSettings;

@@ -9,7 +9,7 @@ function generateToken(): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export type SortMode = "modified-desc" | "modified-asc" | "created-desc" | "created-asc" | "title-asc";
+export type SortMode = "manual" | "modified-desc" | "modified-asc" | "created-desc" | "created-asc" | "title-asc";
 
 export interface JotDropSettings {
   notesFolder: string;
@@ -21,6 +21,7 @@ export interface JotDropSettings {
    */
   assetsFolder: string;
   sortMode: SortMode;
+  cardLayout?: { columnCount: number; columns: Record<string, number> };
   cardWidth: number;
   showArchived: boolean;
   /** Download the article thumbnail when capturing a URL. */
@@ -152,6 +153,7 @@ export class JotDropSettingTab extends PluginSettingTab {
       .addDropdown((dd) =>
         dd
           .addOptions({
+            manual: "Manual (drag cards)",
             "modified-desc": t("sort_modified_desc"),
             "modified-asc": t("sort_modified_asc"),
             "created-desc": t("sort_created_desc"),
