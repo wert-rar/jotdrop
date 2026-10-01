@@ -12,11 +12,15 @@ Arrange note cards manually, like in Google Keep. Card order and column placemen
 
 Mouse dragging is supported; mobile touch reordering is not yet implemented.
 
+![Drag and drop](docs/screenshots/drag-and-drop.gif)
+
 ### 2. Simpler Note Editor
 
 A compact layout with smaller margins, fewer buttons, inline tags, and a reminder popup. Native Markdown Live Preview replaces the plain text field.
 
 Save commits your edits; Archive saves before moving the note; Cancel discards unsaved changes.
+
+![Note creation before and after](docs/screenshots/new-note-before-after.png)
 
 ### 3. Better Markdown Rendering
 
