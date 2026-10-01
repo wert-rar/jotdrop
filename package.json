@@ -41,7 +41,11 @@
     "@types/node": "^20.11.0",
     "esbuild": "^0.28.2",
     "obsidian": "latest",
+    "playwright": "1.63.0",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.2"
   }
 }

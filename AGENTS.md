@@ -35,4 +35,4 @@ implementation or release work.
 
 The canonical source is `https://github.com/wert-rar/jotdrop.git` at
 `origin/main`. The upstream is `https://github.com/Diexar-Labs/jotdrop.git`.
-Canonical AgentMemory scope: `wert-rar/jotdrop`. Fork provenance is recorded in `FORK.md`.
+Fork provenance is recorded in `FORK.md`.

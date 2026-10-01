@@ -9,12 +9,25 @@ const assert = require('node:assert/strict');
   try {
     const page = await browser.newPage({ viewport: { width: 760, height: 780 } });
     await page.setContent('<!doctype html><html><head></head><body></body></html>');
+    await page.addScriptTag({ path: path.join(path.dirname(require.resolve('markdown-it')), 'browser/markdown-it.umd.min.js') });
     await page.addStyleTag({ content: `body {font:14px Arial;background:#eee;color:#222} :root {--background-primary:white;--background-secondary:#f7f7f7;--background-modifier-border:#ddd;--text-normal:#222;--text-muted:#777;--interactive-accent:#9270ff;--background-modifier-hover:#eee} .modal {width:530px;margin:20px auto;background:white;border:1px solid #ccc;border-radius:12px} .modal-title {font-size:20px;font-weight:600} button,input,textarea {font:inherit;box-sizing:border-box} button,input {border:1px solid #ddd;border-radius:5px;background:white} button {cursor:pointer} .mod-cta {background:#9270ff;color:white} [hidden]{display:none!important}` });
     await page.addStyleTag({ content: fs.readFileSync('styles.css', 'utf8') });
     await page.evaluate(() => {
       window.module = { exports: {} };
       window.notices = [];
       window.rendered = [];
+      const fixtureMarkdown = window.markdownit({ html: true });
+      fixtureMarkdown.core.ruler.after('inline', 'fixture-task-checkboxes', state => {
+        state.tokens.forEach((token, index) => {
+          if (token.type !== 'inline' || state.tokens[index - 2]?.type !== 'list_item_open' || !/^\[[ xX]\] /.test(token.content)) return;
+          const checked = /^\[[xX]\]/.test(token.content);
+          token.children[0].content = token.children[0].content.slice(4);
+          const checkbox = new token.constructor('html_inline', '', 0);
+          checkbox.content = `<input class="task-list-item-checkbox" type="checkbox"${checked ? ' checked' : ''}>`;
+          token.children.unshift(checkbox);
+          state.tokens[index - 2].attrSet('class', 'task-list-item');
+        });
+      });
       HTMLElement.prototype.createEl = function (tag, options = {}) {
         const el = document.createElement(tag);
         if (options.cls) el.className = options.cls;
@@ -79,8 +92,7 @@ const assert = require('node:assert/strict');
           setIcon: (el, name) => { el.dataset.icon = name; el.textContent = ({pin:'♧','pin-off':'♧',link:'↗','list-todo':'☑',archive:'▣',bell:'♧',pencil:'✎',eye:'◉'})[name] || name; },
           MarkdownRenderer: { render: async (app, md, target, sourcePath, component) => {
             rendered.push({ md, sourcePath, component });
-            target.textContent = md;
-            if (md.includes('- [ ] task')) target.createEl('input', {cls:'task-list-item-checkbox',attr:{type:'checkbox'}});
+            target.innerHTML = fixtureMarkdown.render(md);
           } }
         };
       };
@@ -117,6 +129,28 @@ const assert = require('node:assert/strict');
       const view = makeView();
       const ordinary = async () => (await view.collectCards()).filter(card=>!card.meta.pinned).map(card=>card.file.basename).join(',');
       assert(await ordinary()==='A,B,C','initial date order');
+      const cachedReadBeforeMalformed = app.vault.cachedRead;
+      app.vault.cachedRead = async file => file === files[0]
+        ? '---\ntags: [unfinished\n---\n# A\nBody'
+        : cachedReadBeforeMalformed(file);
+      const malformedCards = await view.collectCards();
+      assert(malformedCards.length === files.length, 'malformed YAML does not prevent collection of other notes');
+      assert(malformedCards.find(card => card.file === files[3]).meta.pinned, 'valid YAML still supplies pinned state');
+      assert(malformedCards.find(card => card.file === files[0]).order === Infinity, 'malformed YAML has a safe default rank');
+      const malformedBoard = makeView();
+      await malformedBoard.render(); await tick();
+      assert(malformedBoard.gridEl.querySelectorAll('.jotdrop-card').length === files.length, 'malformed YAML does not blank the rendered board');
+      assert(writes.length === 0 && text.get(files[0]).includes('**bold**'), 'malformed YAML fallback does not rewrite notes');
+      await malformedBoard.onClose();
+      malformedBoard.contentEl.remove();
+      metadata.get(files[0]).jotdrop_order = 4096;
+      metadata.get(files[0]).pinned = true;
+      const cachedFallback = (await view.collectCards()).find(card => card.file === files[0]);
+      assert(cachedFallback.order === 4096 && cachedFallback.meta.pinned, 'malformed YAML retains cached rank and pin when available');
+      delete metadata.get(files[0]).jotdrop_order;
+      metadata.get(files[0]).pinned = false;
+      app.vault.cachedRead = cachedReadBeforeMalformed;
+      await view.collectCards();
       await view.moveCard(files[2].path,files[0].path,false);
       assert(plugin.settings.sortMode==='manual','drop enables manual mode');
       assert(await ordinary()==='C,A,B','move before');
@@ -318,6 +352,33 @@ const assert = require('node:assert/strict');
       region.querySelector('input').click(); await tick();
       assert(text.get(files[1]).includes('- [ ] example')&&text.get(files[1]).endsWith('- [x] task'),'card checkbox ignores fenced examples');
       region.remove();
+      const taskExamples = [
+        '    - [ ] example\n\n- [ ] task',
+        '> ```md\n> - [ ] example\n> ```\n\n- [ ] task',
+        '~~~md\n- [ ] example\n~~~\n\n- [ ] task',
+        '<!--\n- [ ] example\n-->\n\n- [ ] task',
+        '- parent\n\n      - [ ] example\n\n- [ ] task',
+        '- parent\n  - [ ] nested\n\n- [ ] task',
+        '> - [ ] quoted\n\n- [ ] task',
+        '1. [ ] numbered\n\n- [ ] task',
+        '\t- [ ] example\n\n- [ ] task',
+        '````md\n```\n- [ ] example\n````\n\n- [ ] task',
+        '> > ~~~md\n> > - [ ] example\n> > ~~~\n\n- [ ] task',
+        '    - [ ] example\r\n\r\n- [ ] task'
+      ];
+      for (const example of taskExamples) {
+        const target = document.body.createDiv();
+        text.set(files[1], '# B\n' + example);
+        view.renderCardMarkdown(target, example, files[1]); await tick();
+        const boxes = [...target.querySelectorAll('input.task-list-item-checkbox')];
+        boxes.at(-1).click(); await tick();
+        assert(text.get(files[1]) === '# B\n' + example.replace(/- \[ \] task$/, '- [x] task'), 'only the selected rendered task is written: ' + example);
+        if (boxes.length > 1) {
+          boxes[0].click(); await tick();
+          assert(text.get(files[1]).includes('[x] nested') || text.get(files[1]).includes('[x] quoted') || text.get(files[1]).includes('[x] numbered'), 'nested, quoted and numbered tasks remain editable');
+        }
+        target.remove();
+      }
       const editor = note.liveEditor;
       await note.persist();
       assert(text.get(files[0]).includes('**changed**'),'saving preserves changed Markdown');

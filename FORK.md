@@ -1,7 +1,6 @@
 # JotDrop fork
 
 This is the independent wert-rar fork of [Diexar Labs JotDrop](https://github.com/Diexar-Labs/jotdrop), based on plugin 0.20.4, commit `722024792bad2176ea757b06c905404eb63ff5a6`.
-Canonical AgentMemory scope: `wert-rar/jotdrop`.
 
 ## Identity and provenance
 - Repository: https://github.com/wert-rar/jotdrop; upstream remote: Diexar-Labs/jotdrop.

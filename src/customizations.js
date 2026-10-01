@@ -1,4 +1,8 @@
 /* Fork features, compiled as a source module by esbuild. */
+import MarkdownIt from 'markdown-it';
+
+const taskMarkdown = new MarkdownIt({ html: true });
+
 export function installJotDropCustomizations({ EditModal, View, obsidian, t, stripFrontmatter }) {
   const { Component, MarkdownRenderer, Notice, setIcon, normalizePath } = obsidian;
   const icon = (button, name, label) => {
@@ -15,18 +19,15 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
 
   function taskLines(markdown) {
     const lines = markdown.split('\n');
-    const tasks = [];
-    let fence = null;
-    lines.forEach((line, index) => {
-      const marker = line.match(/^\s*(`{3,}|~{3,})/);
-      if (marker) {
-        if (!fence) fence = marker[1];
-        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
-        return;
-      }
-      if (!fence && /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)[ xX]\]/.test(line)) tasks.push(index);
+    const tokens = taskMarkdown.parse(markdown, {});
+    return tokens.flatMap((token, index) => {
+      if (token.type !== 'list_item_open' || !token.map) return [];
+      const inline = tokens[index + 2];
+      const line = token.map[0];
+      // Source maps identify actual list items, excluding code and HTML blocks.
+      if (inline?.type !== 'inline' || !/^\[[ xX]\](?:[ \t]|$)/.test(inline.content)) return [];
+      return /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)[ xX]\]/.test(lines[line]) ? [line] : [];
     });
-    return tasks;
   }
   function toggleTask(markdown, index) {
     const lines = markdown.split('\n');
@@ -212,7 +213,16 @@ export function installJotDropCustomizations({ EditModal, View, obsidian, t, str
     const cards = await collect.call(this);
     for (const card of cards) {
       const yaml = card.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-      const frontmatter = yaml ? obsidian.parseYaml(yaml[1]) : {};
+      let frontmatter = {};
+      if (yaml) {
+        frontmatter = this.app.metadataCache.getFileCache(card.file)?.frontmatter || {};
+        try {
+          frontmatter = obsidian.parseYaml(yaml[1]) || {};
+        } catch {
+          // One malformed note must not prevent the other cards from rendering.
+          // Retain cached metadata when available, without rewriting the note.
+        }
+      }
       card.order = Number.isFinite(frontmatter?.jotdrop_order) ? frontmatter.jotdrop_order : Infinity;
       card.meta.pinned = frontmatter?.pinned === true || frontmatter?.pinned === 'true';
     }
