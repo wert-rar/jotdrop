@@ -26,6 +26,12 @@ Save commits your edits; Archive saves before moving the note; Cancel discards u
 
 Cards preserve paragraphs, nested lists, links, code blocks, and embeds using Obsidian’s Markdown renderer. Checkboxes update the note without rebuilding the board.
 
+## Install
+
+Download the plugin files or ZIP from [the latest plugin release](https://github.com/wert-rar/jotdrop/releases/tag/0.20.5). Copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/jotdrop/`, then reload Obsidian and enable JotDrop under Community plugins.
+
+This fork keeps the original plugin ID, so installing it replaces the original JotDrop in that vault. Existing plugin settings stay in the same folder.
+
 ## Build
 
 Requires Node.js and npm. Browser checks require Microsoft Edge.

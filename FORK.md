@@ -5,7 +5,7 @@ This is the independent wert-rar fork of [Diexar Labs JotDrop](https://github.co
 ## Identity and provenance
 - Repository: https://github.com/wert-rar/jotdrop; upstream remote: Diexar-Labs/jotdrop.
 - The user chose to retain plugin name JotDrop and id `jotdrop`; settings stay in the same plugin folder. Do not enable two copies simultaneously.
-- Version 0.20.4 currently identifies the upstream baseline, not a published fork release. No release tag or ZIP has been issued.
+- Version 0.20.4 identifies the upstream baseline. Version 0.20.5 is the first release of this fork.
 - MIT license and author attribution remain; native editor attribution is in THIRD_PARTY.md.
 - The upstream AGENTS.md referenced a gitignored, unshipped machine-specific Hand-off/HANDOFF.md. This tracked document replaces that reference for this fork; the source verification gate remains enabled.
 
