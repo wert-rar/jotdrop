@@ -446,6 +446,7 @@ const assert = require('node:assert/strict');
       assert(capture.contentEl.querySelector('.jotdrop-compact-actions .jotdrop-edit-tagrow'), 'new-note tags use the shared compact controls');
       assert(!capture.contentEl.querySelector('[data-icon="archive"]'), 'new-note draft has no archive action before creation');
       assert(!capture.contentEl.querySelector('.jotdrop-capture-hint'), 'new-note modal removes the extra hint row');
+      assert(getComputedStyle(capture.contentEl.querySelector('.jotdrop-edit-footer')).justifyContent === 'flex-end', 'new-note buttons align with the edit modal');
       capture.liveEditor.editor.setValue('new draft');
       hotkey(capture, 'b');
       assert(capture.state.body === '**new draft**' && capture.textArea.value === '**new draft**', 'new-note hotkeys format and synchronize the draft');
