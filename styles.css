@@ -274,42 +274,54 @@
   background: var(--background-modifier-hover);
 }
 
-/* Geselecteerd chip: accent-achtergrond, sterkere rand én een ✓-symbool.
-   ✓ is essentieel — kleur alléén is niet voldoende voor kleurenblinde
-   gebruikers (pariteit met de Android-FilterChip die ook een Done-icon
-   inblendt). */
-.jotdrop-filter-chip.is-selected {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
-  font-weight: 600;
+.jotdrop-filter-actions {
+  display: inline-flex;
+  gap: 4px;
+  padding-right: 8px;
+  margin-right: 2px;
+  border-right: 1px solid var(--background-modifier-border);
 }
 
-.jotdrop-filter-chip-check {
+.jotdrop-filter-action {
   display: inline-flex;
-  min-width: 10px;
-  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+}
+
+.jotdrop-filter-action:disabled {
+  opacity: 0.4;
+}
+
+.jotdrop-filter-action svg,
+.jotdrop-filter-chip-icon svg,
+.jotdrop-tagpicker-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.jotdrop-filter-chip-icon,
+.jotdrop-tagpicker-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.jotdrop-filter-chip.is-excluded,
+.jotdrop-tagpicker-row.is-excluded {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.jotdrop-filter-chip.is-excluded .jotdrop-filter-chip-label,
+.jotdrop-tagpicker-row.is-excluded .jotdrop-tagpicker-name {
+  text-decoration: line-through;
 }
 
 .jotdrop-filter-chip.is-overflow {
   border-style: dashed;
   color: var(--text-muted);
-}
-
-.jotdrop-filter-clear {
-  margin-left: 4px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 0.8em;
-  text-decoration: underline;
-}
-
-.jotdrop-filter-clear:hover {
-  color: var(--text-normal);
 }
 
 /* Tag-picker modal (overflow-sheet) */
@@ -338,6 +350,12 @@
 
 .jotdrop-tagpicker-row {
   display: flex;
+  width: 100%;
+  height: auto;
+  text-align: left;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -349,20 +367,9 @@
   background: var(--background-modifier-hover);
 }
 
-.jotdrop-tagpicker-row.is-selected {
-  background: var(--background-modifier-active-hover);
-}
-
-.jotdrop-tagpicker-check {
-  display: inline-flex;
-  min-width: 14px;
-  font-weight: 700;
-  color: var(--interactive-accent);
-}
-
 .jotdrop-tagpicker-name {
   flex: 1;
-  color: var(--text-normal);
+  color: inherit;
 }
 
 .jotdrop-tagpicker-count {

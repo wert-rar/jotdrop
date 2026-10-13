@@ -1,4 +1,4 @@
-import { App, Modal } from "obsidian";
+import { App, Modal, setIcon } from "obsidian";
 import { t } from "./i18n";
 
 export interface TagItem {
@@ -6,15 +6,10 @@ export interface TagItem {
   count: number;
 }
 
-/**
- * Multi-select tag picker. Shows a searchable alphabetical list of all
- * tags in the current note set with a ✓ marker per selected tag.
- * Click = toggle; modal stays open until the user closes it (so multiple
- * tags can be checked in succession). Counterpart of the Android `TagPickerSheet`.
- */
+/** Searchable tag visibility toggles; stays open across changes. */
 export class TagPickerModal extends Modal {
   private items: TagItem[];
-  private selected: Set<string>;
+  private excluded: Set<string>;
   private onToggle: (tag: string) => void;
   private listEl!: HTMLElement;
   private inputEl!: HTMLInputElement;
@@ -23,14 +18,12 @@ export class TagPickerModal extends Modal {
   constructor(
     app: App,
     items: TagItem[],
-    selected: Set<string>,
+    excluded: Set<string>,
     onToggle: (tag: string) => void,
   ) {
     super(app);
     this.items = items;
-    // Own copy so toggling in the modal is immediately visually correct
-    // without needing to re-query the outside world.
-    this.selected = new Set(selected);
+    this.excluded = excluded;
     this.onToggle = onToggle;
   }
 
@@ -73,12 +66,15 @@ export class TagPickerModal extends Modal {
     }
 
     for (const item of filtered) {
-      const row = this.listEl.createDiv({ cls: "jotdrop-tagpicker-row" });
-      const isSelected = this.selected.has(item.tag);
-      if (isSelected) row.addClass("is-selected");
+      const row = this.listEl.createEl("button", {
+        cls: "jotdrop-tagpicker-row",
+        attr: { type: "button", "data-tag": item.tag, "aria-pressed": String(!this.excluded.has(item.tag)) },
+      });
+      const isExcluded = this.excluded.has(item.tag);
+      if (isExcluded) row.addClass("is-excluded");
 
-      const check = row.createSpan({ cls: "jotdrop-tagpicker-check" });
-      check.setText(isSelected ? "✓" : "");
+      const check = row.createSpan({ cls: "jotdrop-tagpicker-icon" });
+      setIcon(check, isExcluded ? "eye-off" : "eye");
       row.createSpan({ cls: "jotdrop-tagpicker-name", text: `#${item.tag}` });
       row.createSpan({
         cls: "jotdrop-tagpicker-count",
@@ -87,9 +83,9 @@ export class TagPickerModal extends Modal {
 
       row.addEventListener("click", () => {
         this.onToggle(item.tag);
-        if (this.selected.has(item.tag)) this.selected.delete(item.tag);
-        else this.selected.add(item.tag);
         this.renderList();
+        Array.from(this.listEl.querySelectorAll<HTMLButtonElement>("button"))
+          .find((button) => button.dataset.tag === item.tag)?.focus();
       });
     }
   }

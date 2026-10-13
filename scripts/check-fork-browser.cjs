@@ -68,6 +68,7 @@ const assert = require('node:assert/strict');
             if (binding?.callback(event) === false) event.preventDefault();
           });
         }
+        open() { this.onOpen(); }
         close() { this.onClose(); this.modalEl.remove(); }
       }
       class NativeEditor extends Component {
@@ -100,7 +101,15 @@ const assert = require('node:assert/strict');
           SuggestModal: Modal, Notice: class { constructor(message) { notices.push(message); } },
           normalizePath: p => p.replace(/\\/g, '/'), getLanguage: () => 'en',
           parseYaml:JSON.parse,
-          setIcon: (el, name) => { el.dataset.icon = name; el.textContent = ({pin:'♧','pin-off':'♧',link:'↗','list-todo':'☑',archive:'▣',bell:'♧',pencil:'✎',eye:'◉'})[name] || name; },
+          setIcon: (el, name) => { el.dataset.icon = name;
+            if (name === 'eye' || name === 'eye-off') {
+              const shape = name === 'eye'
+                ? '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
+                : '<path d="m3 3 18 18M10.6 5.1A12 12 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3 4M6 6a20 20 0 0 0-4 6s3.5 7 10 7a13 13 0 0 0 5-1M10 10a3 3 0 0 0 4 4"/>';
+              el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">' + shape + '</svg>';
+              return;
+            }
+            el.textContent = ({pin:'♧','pin-off':'♧',link:'↗','list-todo':'☑',archive:'▣',bell:'♧',pencil:'✎',eye:'◉'})[name] || name; },
           MarkdownRenderer: { render: async (app, md, target, sourcePath, component) => {
             rendered.push({ md, sourcePath, component });
             target.innerHTML = fixtureMarkdown.render(md);
@@ -151,6 +160,71 @@ const assert = require('node:assert/strict');
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
         return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
       };
+      // Exercise the actual tag buttons and rendered grid, including untagged notes.
+      const originalTags = files.map(file => metadata.get(file).tags);
+      const originalPinnedText = text.get(files[3]);
+      text.set(files[3], originalPinnedText + '\nunique-search-needle');
+      [['work'], ['work', 'archive'], [], ['archive']].forEach((tags, i) => metadata.get(files[i]).tags = tags);
+      const tagView = makeView();
+      Object.assign(tagView.contentEl.style, { width:'640px', height:'auto', overflow:'visible', padding:'16px', background:'white' });
+      tagView.filterBarEl = tagView.contentEl.createDiv({cls:'jotdrop-filter-bar'});
+      tagView.contentEl.prepend(tagView.filterBarEl);
+      const tagClick = async selector => {
+        const button = tagView.filterBarEl.querySelector(selector);
+        assert(button && !button.disabled, 'tag control is available: ' + selector);
+        button.click(); await tick(); await tick();
+      };
+      const visibleNames = () => tagView.lastFiltered.map(card => card.file.basename).sort().join(',');
+      await tagView.render(); await tick();
+      assert(visibleNames() === 'A,B,C,Pinned', 'all tagged and untagged notes are visible initially');
+      assert(tagView.filterBarEl.querySelector('[data-tag="archive"]').getAttribute('aria-pressed') === 'true', 'tags start enabled');
+      await tagClick('[data-tag="archive"]');
+      assert(visibleNames() === 'A,C', 'one excluded tag hides multi-tag notes and pinned notes');
+      assert(getComputedStyle(tagView.filterBarEl.querySelector('[data-tag="archive"] .jotdrop-filter-chip-label')).textDecorationLine.includes('line-through'), 'hidden tag is visibly crossed out');
+      window.tagVisibilityPreviewHTML = tagView.contentEl.outerHTML;
+      await tagView.render(); await tick();
+      assert(visibleNames() === 'A,C', 'exclusions survive a board refresh');
+      await tagClick('[data-tag="archive"]');
+      assert(visibleNames() === 'A,B,C,Pinned', 'clicking an excluded tag restores its notes');
+      await tagClick('[data-tag="archive"]');
+      tagView.query = 'unique-search-needle'; await tagView.render(); await tick();
+      assert(visibleNames() === '', 'search cannot reveal excluded notes');
+      await tagClick('[data-action="show-all"]');
+      assert(visibleNames() === 'Pinned' && tagView.query === 'unique-search-needle', 'show all resets visibility and preserves the search query');
+      tagView.clearAllFilters(); await tick(); await tick();
+      assert(visibleNames() === 'A,B,C,Pinned' && tagView.query === '', 'full reset also clears the search');
+      await tagClick('[data-action="hide-all"]');
+      assert(tagView.gridEl.querySelectorAll('.jotdrop-card').length === 0 && visibleNames() === '', 'hide all removes every card, including untagged notes');
+      assert([...tagView.filterBarEl.querySelectorAll('[aria-pressed]')].every(button => button.getAttribute('aria-pressed') === 'false'), 'hide all switches off every visible category');
+      assert(tagView.filterBarEl.querySelector('[data-action="hide-all"]').disabled, 'hide all is disabled when everything is hidden');
+      await tagClick('.jotdrop-filter-untagged');
+      assert(visibleNames() === 'C', 'untagged notes can be restored independently');
+      await tagClick('[data-action="hide-all"]');
+      tagView.gridEl.querySelector('.jotdrop-empty-clear').click(); await tick(); await tick();
+      assert(visibleNames() === 'A,B,C,Pinned', 'empty-state reset restores every category');
+      await tagClick('[data-action="hide-all"]');
+      const freshView = makeView(); await freshView.render(); await tick();
+      assert(freshView.lastFiltered.length === 4, 'visibility defaults are per view, not saved to notes/settings');
+      await freshView.onClose(); freshView.contentEl.remove();
+
+      await tagClick('[data-action="show-all"]');
+      metadata.get(files[3]).tags = ['archive', ...Array.from({length:9}, (_,i) => 'z' + i)];
+      await tagView.render(); await tick();
+      await tagClick('.is-overflow');
+      const pickerRow = () => document.querySelector('.jotdrop-tagpicker-row[data-tag="z8"]');
+      assert(pickerRow()?.tagName === 'BUTTON', 'overflow tags use native keyboard-accessible buttons');
+      pickerRow().click(); await tick(); await tick();
+      assert(visibleNames() === 'A,B,C', 'overflow tag exclusion updates the board immediately');
+      assert(pickerRow().getAttribute('aria-pressed') === 'false', 'picker shares the visibility state without toggling twice');
+      assert(tagView.filterBarEl.querySelector('[data-tag="z8"].is-excluded'), 'excluded overflow tag stays visible on the toolbar');
+      pickerRow().click(); await tick(); await tick();
+      assert(visibleNames() === 'A,B,C,Pinned', 'overflow tag can be enabled again');
+      document.querySelector('.modal').remove();
+      originalTags.forEach((tags,i) => metadata.get(files[i]).tags = tags);
+      text.set(files[3], originalPinnedText);
+      assert(writes.length === 0, 'visibility changes do not write note metadata');
+      await tagView.onClose(); tagView.contentEl.remove();
+
       const view = makeView();
       const ordinary = async () => (await view.collectCards()).filter(card=>!card.meta.pinned).map(card=>card.file.basename).join(',');
       assert(await ordinary()==='A,B,C','initial date order');
@@ -534,6 +608,8 @@ const assert = require('node:assert/strict');
     await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
     await page.evaluate(()=>{document.body.innerHTML=window.masonryFixtureHTML;});
     await page.screenshot({ path: 'work/verification/masonry-preview.png', fullPage: true });
+    await page.evaluate(() => { document.body.innerHTML = window.tagVisibilityPreviewHTML; });
+    await page.screenshot({ path: 'work/verification/tag-visibility-preview.png', fullPage: true });
     assert.equal(result.notices.some(message=>message.startsWith('JotDrop:')),false);
     console.log(`PASS: ${result.checks} browser integration checks (mock Obsidian services; real bundle, DOM and CSS).`);
     console.log('PASS: real browser mouse drag into an empty column (trusted dragstart and drop events).');

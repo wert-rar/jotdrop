@@ -118,7 +118,8 @@ export class JotDropView extends ItemView {
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
   private query = "";
-  private selectedTags = new Set<string>();
+  private excludedTags = new Set<string>();
+  private hideUntagged = false;
   private selectionMode = false;
   private selectedPaths = new Set<string>();
   private lastFiltered: CardData[] = [];
@@ -689,13 +690,6 @@ export class JotDropView extends ItemView {
     const cards = await this.collectCards();
     this.renderFilterBar(cards);
 
-    // Drop selected tags that no longer exist after note mutations, so the
-    // user cannot get stuck with a "dead" filter.
-    const tagFreq = computeTagFrequency(cards);
-    for (const sel of Array.from(this.selectedTags)) {
-      if (!tagFreq.has(sel)) this.selectedTags.delete(sel);
-    }
-
     const filtered = cards.filter((c) => this.matchesFilters(c));
     this.lastFiltered = filtered;
 
@@ -857,9 +851,7 @@ export class JotDropView extends ItemView {
   }
 
   /**
-   * Builds the tag-chip strip below the toolbar: top-N by frequency + always
-   * also any selected tags that fall outside the top (otherwise a selected tag
-   * would disappear after a new note with different tags is added).
+   * Shows frequent tags and active exclusions so hidden tags remain reachable.
    * Shows a "+N more" chip when tags remain; opens TagPickerModal.
    */
   private renderFilterBar(cards: CardData[]): void {
@@ -867,24 +859,64 @@ export class JotDropView extends ItemView {
     this.filterBarEl.empty();
 
     const tagFreq = computeTagFrequency(cards);
-    if (tagFreq.size === 0) {
+    const hasFilters = this.excludedTags.size > 0 || this.hideUntagged;
+    if (cards.length === 0 && !hasFilters) {
       this.filterBarEl.toggleClass("is-hidden", true);
       return;
     }
     this.filterBarEl.toggleClass("is-hidden", false);
+    const actions = this.filterBarEl.createDiv({ cls: "jotdrop-filter-actions" });
+    const showAll = actions.createEl("button", {
+      cls: "jotdrop-filter-action",
+      attr: { type: "button", "aria-label": t("tag_show_all"), "data-action": "show-all" },
+    });
+    setIcon(showAll, "eye");
+    showAll.disabled = !hasFilters;
+    showAll.addEventListener("click", () => {
+      this.excludedTags.clear();
+      this.hideUntagged = false;
+      this.renderLimit = RENDER_CHUNK;
+      void this.render();
+    });
+    const hideAll = actions.createEl("button", {
+      cls: "jotdrop-filter-action",
+      attr: { type: "button", "aria-label": t("tag_hide_all"), "data-action": "hide-all" },
+    });
+    setIcon(hideAll, "eye-off");
+    hideAll.disabled = this.hideUntagged && [...tagFreq.keys()].every((tag) => this.excludedTags.has(tag));
+    hideAll.addEventListener("click", () => {
+      for (const tag of tagFreq.keys()) this.excludedTags.add(tag);
+      this.hideUntagged = true;
+      this.renderLimit = RENDER_CHUNK;
+      void this.render();
+    });
 
     const byFreqDesc = Array.from(tagFreq.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const top = byFreqDesc.slice(0, TAG_CHIPS_TOP_N).map(([tag]) => tag);
     const topSet = new Set(top);
-    const extraSelected = Array.from(this.selectedTags)
-      .filter((t) => !topSet.has(t) && tagFreq.has(t))
+    const extraExcluded = Array.from(this.excludedTags)
+      .filter((t) => !topSet.has(t))
       .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-    const visibleTags = [...top, ...extraSelected];
-    const overflowCount = Math.max(0, tagFreq.size - visibleTags.length);
+    const visibleTags = [...top, ...extraExcluded];
+    const overflowCount = byFreqDesc.filter(([tag]) => !visibleTags.includes(tag)).length;
 
     for (const tag of visibleTags) {
-      this.renderTagChip(tag, this.selectedTags.has(tag));
+      this.renderTagChip(tag, this.excludedTags.has(tag));
+    }
+
+    if (cards.some((card) => card.meta.tags.length === 0) || this.hideUntagged) {
+      const chip = this.filterBarEl.createEl("button", {
+        cls: "jotdrop-filter-chip jotdrop-filter-untagged" + (this.hideUntagged ? " is-excluded" : ""),
+        attr: { type: "button", "aria-pressed": String(!this.hideUntagged) },
+      });
+      setIcon(chip.createSpan({ cls: "jotdrop-filter-chip-icon" }), this.hideUntagged ? "eye-off" : "eye");
+      chip.createSpan({ cls: "jotdrop-filter-chip-label", text: t("tag_untagged") });
+      chip.addEventListener("click", () => {
+        this.hideUntagged = !this.hideUntagged;
+        this.renderLimit = RENDER_CHUNK;
+        void this.render();
+      });
     }
 
     if (overflowCount > 0) {
@@ -901,45 +933,34 @@ export class JotDropView extends ItemView {
         new TagPickerModal(
           this.app,
           items,
-          this.selectedTags,
+          this.excludedTags,
           (tag) => this.toggleTagFilter(tag),
         ).open();
       });
     }
 
-    if (this.selectedTags.size > 0) {
-      const clear = this.filterBarEl.createEl("button", {
-        cls: "jotdrop-filter-clear",
-        text: t("tag_filter_clear"),
-      });
-      clear.addEventListener("click", () => {
-        this.selectedTags.clear();
-        void this.render();
-      });
-    }
   }
 
-  private renderTagChip(tag: string, isSelected: boolean): void {
+  private renderTagChip(tag: string, isExcluded: boolean): void {
     const chip = this.filterBarEl.createEl("button", {
-      cls: `jotdrop-filter-chip${isSelected ? " is-selected" : ""}`,
+      cls: "jotdrop-filter-chip" + (isExcluded ? " is-excluded" : ""),
+      attr: { type: "button", "aria-pressed": String(!isExcluded), "data-tag": tag },
     });
-    // Explicit ✓ symbol — color alone is insufficient (color-blind parity
-    // with the Android FilterChip that also shows a Done icon).
-    const check = chip.createSpan({ cls: "jotdrop-filter-chip-check" });
-    check.setText(isSelected ? "✓" : "");
-    chip.createSpan({ cls: "jotdrop-filter-chip-label", text: `#${tag}` });
+    setIcon(chip.createSpan({ cls: "jotdrop-filter-chip-icon" }), isExcluded ? "eye-off" : "eye");
+    chip.createSpan({ cls: "jotdrop-filter-chip-label", text: "#" + tag });
     chip.addEventListener("click", () => this.toggleTagFilter(tag));
   }
 
   private toggleTagFilter(tag: string): void {
-    if (this.selectedTags.has(tag)) this.selectedTags.delete(tag);
-    else this.selectedTags.add(tag);
+    if (this.excludedTags.has(tag)) this.excludedTags.delete(tag);
+    else this.excludedTags.add(tag);
     this.renderLimit = RENDER_CHUNK;
     void this.render();
   }
 
   private clearAllFilters(): void {
-    this.selectedTags.clear();
+    this.excludedTags.clear();
+    this.hideUntagged = false;
     this.query = "";
     if (this.searchEl) this.searchEl.value = "";
     this.renderLimit = RENDER_CHUNK;
@@ -976,8 +997,7 @@ export class JotDropView extends ItemView {
   }
 
   /**
-   * AND between search text and tag filter; OR within selected tags
-   * (a note matches as soon as it has at least one of the selected tags).
+   * Search and visibility both apply. Any excluded tag hides the note.
    */
   private matchesFilters(card: CardData): boolean {
     const q = this.query;
@@ -988,8 +1008,8 @@ export class JotDropView extends ItemView {
       card.meta.tags.some((t) => t.toLowerCase().includes(q));
     if (!matchesQuery) return false;
 
-    if (this.selectedTags.size === 0) return true;
-    return card.meta.tags.some((t) => this.selectedTags.has(t));
+    if (card.meta.tags.length === 0) return !this.hideUntagged;
+    return !card.meta.tags.some((tag) => this.excludedTags.has(tag));
   }
 
   private renderCard(parent: HTMLElement, card: CardData): void {
