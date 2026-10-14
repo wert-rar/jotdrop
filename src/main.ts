@@ -25,6 +25,7 @@ export { EditNoteModal, QuickCaptureModal, JotDropView };
 export { extractPreview } from "./view";
 
 export default class JotDropPlugin extends Plugin {
+  cardsVersion = 0;
   settings!: JotDropSettings;
   private refreshTimer: number | null = null;
   // Paths whose next modify-event should be ignored: used during in-place
@@ -70,6 +71,7 @@ export default class JotDropPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("modify", (file) => {
       if (file instanceof TFile) this.reminderScheduler.scheduleFile(file);
       if (this.suppressedPaths.has(file.path)) {
+        this.cardsVersion++;
         this.suppressedPaths.delete(file.path);
         return;
       }
@@ -309,6 +311,7 @@ export default class JotDropPlugin extends Plugin {
   }
 
   refreshViews(): void {
+    this.cardsVersion++;
     if (this.refreshTimer != null) {
       window.clearTimeout(this.refreshTimer);
     }

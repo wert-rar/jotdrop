@@ -123,6 +123,8 @@ export class JotDropView extends ItemView {
   private selectionMode = false;
   private selectedPaths = new Set<string>();
   private lastFiltered: CardData[] = [];
+  private filterCards: CardData[] | null = null;
+  private filterCardsVersion = -1;
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
   // Windowed rendering state. renderLimit survives re-renders (selection
@@ -680,14 +682,24 @@ export class JotDropView extends ItemView {
     }
   }
 
-  async render(): Promise<void> {
+  async render(reuseCards = false): Promise<void> {
     if (!this.gridEl) return;
+    // Visibility changes use the loaded snapshot; vault/settings refreshes reread it.
+    const version = this.plugin.cardsVersion;
+    const cards = reuseCards && this.filterCards !== null && this.filterCardsVersion === version
+      ? this.filterCards
+      : await this.collectCards();
+    this.filterCards = cards;
+    this.filterCardsVersion = version;
+    this.renderCards(cards);
+  }
+
+  private renderCards(cards: CardData[]): void {
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
     this.gridEl.empty();
 
-    const cards = await this.collectCards();
     this.renderFilterBar(cards);
 
     const filtered = cards.filter((c) => this.matchesFilters(c));
@@ -876,7 +888,7 @@ export class JotDropView extends ItemView {
       this.excludedTags.clear();
       this.hideUntagged = false;
       this.renderLimit = RENDER_CHUNK;
-      void this.render();
+      void this.render(true);
     });
     const hideAll = actions.createEl("button", {
       cls: "jotdrop-filter-action",
@@ -888,7 +900,7 @@ export class JotDropView extends ItemView {
       for (const tag of tagFreq.keys()) this.excludedTags.add(tag);
       this.hideUntagged = true;
       this.renderLimit = RENDER_CHUNK;
-      void this.render();
+      void this.render(true);
     });
 
     const byFreqDesc = Array.from(tagFreq.entries())
@@ -915,7 +927,7 @@ export class JotDropView extends ItemView {
       chip.addEventListener("click", () => {
         this.hideUntagged = !this.hideUntagged;
         this.renderLimit = RENDER_CHUNK;
-        void this.render();
+        void this.render(true);
       });
     }
 
@@ -955,7 +967,7 @@ export class JotDropView extends ItemView {
     if (this.excludedTags.has(tag)) this.excludedTags.delete(tag);
     else this.excludedTags.add(tag);
     this.renderLimit = RENDER_CHUNK;
-    void this.render();
+    void this.render(true);
   }
 
   private clearAllFilters(): void {
@@ -964,7 +976,7 @@ export class JotDropView extends ItemView {
     this.query = "";
     if (this.searchEl) this.searchEl.value = "";
     this.renderLimit = RENDER_CHUNK;
-    void this.render();
+    void this.render(true);
   }
 
   private async collectCards(): Promise<CardData[]> {

@@ -1,44 +1,46 @@
 # PROJECTSTATUS
 
 ## Current goals
-- Загрузить установленную сборку через перезапуск Obsidian и проверить новую панель тегов.
-- Latest session report: [2026-10-13-2151](work-reports/2026-10-13-2151.md).
+- Устранена задержка переключения тегов; перезагрузить JotDrop и проверить отзывчивость в живом Obsidian.
+- Latest session report: [2026-10-14-1439](work-reports/2026-10-14-1439.md).
 
 ## Completed tasks still relevant to the current phase
-- Реализованы включённые по умолчанию теги, скрытие по клику, перечёркивание и кнопки глаза.
-- Hide all скрывает все заметки; Untagged позволяет отдельно вернуть заметки без тегов.
-- Проверенная сборка установлена в .obsidian/plugins/jotdrop хранилища Obsidian; настройки сохранены.
-- Предыдущая сборка сохранена: C:/Users/zhigu/GitHub/jotdrop/work/backups/jotdrop-before-tags-2026-10-13-214911.
+- Сохранены временные исключения тегов, Show all / Hide all, Untagged и окно остальных тегов.
+- Переключение видимости использует уже загруженные карточки без повторного чтения всех заметок.
+- Изменения файлов/настроек, включая чекбоксы без перерисовки, делают сохранённые данные неактуальными; следующее обновление перечитывает их.
+- Перерисовка выполняется после получения данных; быстрые клики и фоновое чтение не дублируют карточки.
+- Сборка проверена; установка из чистого коммита подготовлена.
 
 ## Key technical decisions
-- Ветка codex/tag-visibility; установлен код коммита 4210a4c3243c57ce013f842a004a0d27badaa611, основанный на origin/main c634354.
-- Любой выключенный тег скрывает заметку; временное состояние живёт в текущем view.
-- Show all сбрасывает видимость, сохраняя поиск; полный сброс очищает поиск.
-- Android не изменён. Deploy выполнен штатным скриптом из чистого коммита.
-- Canonical AgentMemory scope: `wert-rar/jotdrop`. MCP недоступен, recall/save не выполнены.
+- Ветка `codex/tag-visibility`, проверенная база `origin/main` c634354dfaa51bf07cd4c38f57532cb67888cce7; Android не изменён.
+- Достаточно одного исключённого тега, чтобы скрыть заметку. Состояние фильтра живёт в текущем view.
+- `cardsVersion` меняется при событиях хранилища и настройках, включая подавленные события modify после локальных правок.
+- Обычный `render()` обновляет данные; `render(true)` повторно использует только актуальный снимок.
+- Canonical AgentMemory scope: `wert-rar/jotdrop`. MCP недоступен; recall/save не выполнены.
 
 ## Main files changed
-- Исходники функции: src/view.ts, src/tagPicker.ts, src/i18n.ts, styles.css, scripts/check-fork-browser.cjs.
-- Установлены main.js, manifest.json и styles.css в плагин Obsidian.
-- docs/tag-filter-exclusions.md, PROJECTSTATUS.md, work-reports/2026-10-13-2151.md.
+- `src/view.ts`: повторное использование данных и отдельная синхронная перерисовка.
+- `src/main.ts`: версия данных для инвалидирования сохранённого снимка.
+- `src/customizations.js`: сохранение scroll/Markdown/masonry при новом порядке обновления.
+- `scripts/check-fork-browser.cjs`: режим `--tag-performance`, задержанные чтения и проверки актуальности.
+- `docs/tag-filter-exclusions.md`, `PROJECTSTATUS.md`, отчёт сессии.
 
 ## Testing and verification results
-- PASSED ранее: 154 браузерные проверки, реальное перетаскивание, Markdown check, визуальный просмотр стенда.
-- PASSED при установке: fetch/SHA, совпадение с тестовой копией, verify:deploy, build/verify:base/TypeScript, три hash-сравнения, неизменность data.json.
-- Тесты повторно не запускались: bundle и исходники совпали с проверенными.
-- NOT RUN: проверка новой версии в живом Obsidian после перезапуска.
-- Логи: work/logs/tag-visibility-deploy.log и tag-visibility-deployment.json.
+- PASSED: `npm run build` (verify:base, TypeScript, esbuild); `git diff --check`.
+- PASSED: `node scripts/check-fork-browser.cjs --tag-performance` — 18 проверок; 160 искусственных заметок, переключение 9–16 мс, 0 повторных чтений при неизменных данных.
+- До исправления тот же тест: 796 мс и 160 повторных чтений на один тег.
+- PASSED: `npm run check:fork` — Markdown, 154 браузерные проверки и реальное перетаскивание мышью в стенде.
+- NOT RUN: проверка исправления в живом Obsidian; автоматическая перезагрузка недоступна в этой сессии.
+- Логи: `work/logs/tag-performance-before.log`, `tag-performance-after.log`, `tag-performance-build.log`, `tag-performance-full.log`.
 
 ## Known issues
-- Новые файлы на месте; работающий Obsidian ещё требует перезапуска/переключения плагина.
-- CLI отключён; Computer Use не получил разрешение управлять Obsidian.
+- Требуется перезапуск Obsidian или выключение/включение JotDrop для загрузки новой сборки.
 - AgentMemory недоступен.
 
 ## Approaches already tried but unsuccessful
-- CLI не перезагружает плагин при выключенном интерфейсе командной строки.
-- Computer Use: окно найдено, но доступ к его состоянию отклонён; ввод не выполнялся.
+- Регрессионный тест до исправления воспроизвёл медленное повторное чтение; после исправления прошёл.
 
 ## Ordered next development steps
-1. Перезапустить Obsidian или выключить/включить JotDrop.
-2. Проверить переключатели тегов, обе кнопки глаза, Untagged и поиск в текущей теме.
-3. При необходимости продолжить разработку на актуальной базе с соблюдением AGENTS.md/FORK.md.
+1. Перезагрузить JotDrop в Obsidian.
+2. Проверить один тег, быстрые клики, обе кнопки глаза, Untagged и окно остальных тегов на реальных заметках.
+3. При восстановлении AgentMemory сохранить результат в scope `wert-rar/jotdrop`.

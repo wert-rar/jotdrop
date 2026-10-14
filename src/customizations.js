@@ -506,14 +506,19 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     }
   };
   const render = View.prototype.render;
-  View.prototype.render = async function () {
+  View.prototype.render = async function (...args) {
     if (this.reordering) { this.renderPending=true; return; }
+    return render.apply(this, args);
+  };
+  const renderCards = View.prototype.renderCards;
+  View.prototype.renderCards = function (cards) {
+    // Keep the existing board alive while a fresh snapshot is loading.
     this.stopMasonryObservation();
     const scroll = this.contentEl.scrollTop;
     const height = this.gridEl?.style.minHeight;
     if (this.gridEl) this.gridEl.style.minHeight=`${this.gridEl.getBoundingClientRect().height}px`;
     clearMarkdown(this);
-    try { return await render.call(this); }
+    try { return renderCards.call(this, cards); }
     finally {
       if (this.gridEl) this.gridEl.style.minHeight=height;
       this.contentEl.scrollTop=scroll;

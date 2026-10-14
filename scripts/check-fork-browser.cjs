@@ -4,6 +4,7 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const tagPerformanceOnly = process.argv.includes('--tag-performance');
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
@@ -119,7 +120,7 @@ const assert = require('node:assert/strict');
     });
     const installed = fs.readFileSync('main.js', 'utf8');
     await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
-    const result = await page.evaluate(async () => {
+    const result = await page.evaluate(async (tagPerformanceOnly) => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
       const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -132,10 +133,10 @@ const assert = require('node:assert/strict');
         vault: {
           getMarkdownFiles:()=>files, cachedRead:async file=>'---\n'+JSON.stringify(metadata.get(file))+'\n---\n'+text.get(file), read:async file=>text.get(file),
           getAbstractFileByPath:()=>({}), createFolder:async()=>{},
-          modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path))plugin.suppressedPaths.delete(file.path);else plugin.refreshViews();return value;}
+          modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();return value;}
         },
         fileManager: {
-          processFrontMatter:async(file,callback)=>{writes.push(file.path); callback(metadata.get(file));if(plugin.suppressedPaths.has(file.path))plugin.suppressedPaths.delete(file.path);else plugin.refreshViews();},
+          processFrontMatter:async(file,callback)=>{writes.push(file.path); callback(metadata.get(file));if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();},
           renameFile:async(file,newPath)=>{file.path=newPath;}
         }, workspace:{openLinkText:async()=>{}},embedRegistry:{embedByExtension:{md:editorProbe}},
         hotkeyManager: {
@@ -154,12 +155,89 @@ const assert = require('node:assert/strict');
         }
       };
       let refreshes = 0;
-      const plugin = {settings:{notesFolder:'Grail',archiveFolder:'Grail/Archive',sortMode:'modified-desc',showArchived:false},saveSettings:async()=>{},refreshViews:()=>{refreshes++;},resolveAssetCandidates:()=>[],suppressedPaths:new Set(),suppressModifyOnce(path){this.suppressedPaths.add(path);}};
+      const plugin = {cardsVersion:0,settings:{notesFolder:'Grail',archiveFolder:'Grail/Archive',sortMode:'modified-desc',showArchived:false},saveSettings:async()=>{},refreshViews:()=>{refreshes++;plugin.cardsVersion++;},resolveAssetCandidates:()=>[],suppressedPaths:new Set(),suppressModifyOnce(path){this.suppressedPaths.add(path);}};
       const makeView = (viewPlugin=plugin) => {
         const contentEl=document.body.createDiv({cls:'fixture-board'});
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
         return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
       };
+      if (tagPerformanceOnly) {
+        const perfFiles = Array.from({length:160}, (_,i) => ({path:`Grail/Perf${i}.md`,name:`Perf${i}.md`,basename:`Perf${i}`,stat:{ctime:i,mtime:i}}));
+        perfFiles.forEach((file,i) => { metadata.set(file,{tags:[i % 2 ? 'keep' : 'hide']}); text.set(file,'Short note\n\n- [ ] task'); });
+        app.vault.getMarkdownFiles = () => perfFiles;
+        const read = app.vault.cachedRead;
+        let reads = 0;
+        let slow = false;
+        app.vault.cachedRead = async file => {
+          reads++;
+          if (slow) await new Promise(resolve => setTimeout(resolve, 2));
+          return read(file);
+        };
+        const board = makeView();
+        board.filterBarEl = board.contentEl.createDiv({cls:'jotdrop-filter-bar'});
+        await board.render();
+        await tick();
+        slow = true;
+        reads = 0;
+        const render = board.render.bind(board);
+        let pending;
+        board.render = (...args) => pending = render(...args);
+        const samples = [];
+        const click = async selector => {
+          const started = performance.now();
+          board.filterBarEl.querySelector(selector).click();
+          await pending;
+          const elapsed = performance.now() - started;
+          samples.push(Math.round(elapsed));
+          assert(reads === 0 && elapsed < 200, `tag toggle must finish without rereading notes: ${reads} reads, ${Math.round(elapsed)} ms`);
+        };
+        await click('[data-tag="hide"]');
+        assert(board.lastFiltered.length === 80, 'single tag immediately hides matching notes');
+        await click('[data-tag="hide"]');
+        assert(board.lastFiltered.length === 160, 'single tag immediately restores matching notes');
+        await click('[data-action="hide-all"]');
+        assert(board.lastFiltered.length === 0, 'hide all responds without file reads');
+        await click('[data-action="show-all"]');
+        assert(board.lastFiltered.length === 160, 'show all responds without file reads');
+        board.toggleTagFilter('hide'); board.toggleTagFilter('keep'); board.toggleTagFilter('hide');
+        await pending;
+        await tick();
+        assert(board.lastFiltered.length === 80 && board.lastFiltered.every(card => card.meta.tags.includes('hide')), 'rapid toggles use the final filter state');
+        const visibleCards = [...board.gridEl.querySelectorAll('.jotdrop-card')];
+        assert(visibleCards.length > 0 && visibleCards.length <= 80 && new Set(visibleCards.map(card => card.dataset.path)).size === visibleCards.length, 'rapid toggles render one chunk without duplicate cards');
+        slow = false;
+        text.set(perfFiles[0], 'Changed content');
+        metadata.set(perfFiles[0], {tags:['keep']});
+        perfFiles.pop();
+        await board.render();
+        assert(reads === 159, 'external refresh rereads the current file set');
+        assert(board.lastFiltered.length === 79 && !board.lastFiltered.some(card => card.file === perfFiles[0]), 'external refresh applies changed tags and deletion');
+        reads = 0;
+        await click('[data-action="show-all"]');
+        assert(board.lastFiltered.length === 159 && board.lastFiltered.find(card => card.file === perfFiles[0]).content.includes('Changed content'), 'fast filters use externally refreshed content');
+        await tick();
+        const taskCard = board.gridEl.querySelector('.jotdrop-card');
+        const taskPath = taskCard.dataset.path;
+        taskCard.querySelector('.task-list-item-checkbox').click();
+        await tick();
+        reads = 0;
+        board.toggleTagFilter('keep');
+        await pending; await tick();
+        assert(reads === 159, 'in-place checkbox writes invalidate loaded snapshots without a board refresh');
+        const updatedTaskCard = [...board.gridEl.querySelectorAll('.jotdrop-card')].find(card => card.dataset.path === taskPath);
+        assert(updatedTaskCard.querySelector('.task-list-item-checkbox').checked, 'filtering preserves the saved checkbox state');
+        slow = true;
+        const refresh = board.render();
+        board.toggleTagFilter('keep');
+        await pending;
+        assert(board.lastFiltered.length === 159, 'tag toggle responds while a background refresh reads notes');
+        await refresh;
+        const refreshedCards = [...board.gridEl.querySelectorAll('.jotdrop-card')];
+        assert(board.lastFiltered.length === 159 && new Set(refreshedCards.map(card => card.dataset.path)).size === refreshedCards.length, 'background refresh preserves final filters without duplicate cards');
+        await board.onClose(); board.contentEl.remove();
+        return {checks,samples};
+      }
+
       // Exercise the actual tag buttons and rendered grid, including untagged notes.
       const originalTags = files.map(file => metadata.get(file).tags);
       const originalPinnedText = text.get(files[3]);
@@ -593,7 +671,11 @@ const assert = require('node:assert/strict');
       app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
       return { checks, notices, writes:writes.length };
-    });
+    }, tagPerformanceOnly);
+    if (tagPerformanceOnly) {
+      console.log(`PASS: ${result.checks} tag responsiveness checks; toggle times: ${result.samples.join(", ")} ms (160 notes, delayed file reads).`);
+      return;
+    }
     fs.mkdirSync('work/verification', { recursive: true });
     await page.screenshot({ path: 'work/verification/modal-preview.png', fullPage: true });
     await page.setViewportSize({width:900,height:780});
