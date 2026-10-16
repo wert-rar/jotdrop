@@ -155,6 +155,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       const app = {
         metadataCache: {getFileCache: file => ({frontmatter: metadata.get(file)}),getTags:()=>({})},
         vault: {
+          configDir: '.obsidian', adapter: {write:async(file,value)=>{window.dragDiagnostics=JSON.parse(value);}},
           getMarkdownFiles:()=>files, cachedRead:async file=>'---\n'+JSON.stringify(metadata.get(file))+'\n---\n'+text.get(file), read:async file=>text.get(file),
           getAbstractFileByPath:()=>({}), createFolder:async()=>{},
           modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();return value;}
@@ -225,6 +226,9 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const nodes=[...board.gridEl.querySelectorAll('.jotdrop-card')];
         assert(nodes.length===7&&new Set(nodes.map(node=>node.dataset.path)).size===7,'all cards remain present once after refresh and consecutive moves');
         assert(board.gridEl.querySelector(`[data-path="${sourcePath}"]`).parentElement===board.gridEl.querySelectorAll('.jotdrop-grid-col')[1],'target column survives the next authoritative refresh');
+        await tick();
+        assert(window.dragDiagnostics.events.length<=80&&window.dragDiagnostics.events.some(event=>event.stage==='move-settled'),'temporary diagnostics record completed moves in a bounded journal');
+        assert(!JSON.stringify(window.dragDiagnostics).includes('DragRace')&&!JSON.stringify(window.dragDiagnostics).includes('Incoming note'),'temporary diagnostics exclude note names and Markdown');
         await board.onClose();board.contentEl.remove();
         return {checks};
       }
