@@ -100,6 +100,48 @@
   outline-offset: 1px;
 }
 
+.jotdrop-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  cursor: pointer;
+}
+
+.jotdrop-sort-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.jotdrop-sort-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.jotdrop-sort-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.jotdrop-sort-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.jotdrop-sort-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .jotdrop-toolbar.is-hidden,
 .jotdrop-filter-bar.is-hidden {
   display: none;

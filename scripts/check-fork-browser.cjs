@@ -110,6 +110,18 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         if (name !== 'obsidian') throw new Error('Unexpected dependency: ' + name);
         return {
           Plugin: Component, PluginSettingTab: Component, ItemView: Component, Component, Modal,
+          Menu: class {
+            constructor() { this.items = []; }
+            addItem(build) {
+              const item = {
+                setTitle(title) { this.title = title; return this; },
+                setChecked(checked) { this.checked = checked; return this; },
+                onClick(callback) { this.callback = callback; return this; },
+              };
+              build(item); this.items.push(item); return this;
+            }
+            showAtPosition(position) { this.position = position; window.fixtureMenu = this; }
+          },
           SuggestModal: Modal, Notice: class { constructor(message) { notices.push(message); } },
           normalizePath: p => p.replace(/\\/g, '/'), getLanguage: () => 'en',
           parseYaml:JSON.parse,
@@ -325,12 +337,93 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         await refresh;
         const refreshedCards = [...board.gridEl.querySelectorAll('.jotdrop-card')];
         assert(board.lastFiltered.length === 159 && new Set(refreshedCards.map(card => card.dataset.path)).size === refreshedCards.length, 'background refresh preserves final filters without duplicate cards');
+        // File changes invalidate the snapshot while the toolbar remains clickable.
+        // Reproduce a refresh followed by two tag clicks during delayed file reads.
+        reads = 0;
+        plugin.cardsVersion++;
+        const burstRendersBefore = rendered.length;
+        const burstLimit = board.renderLimit;
+        const burstStarted = performance.now();
+        const burstRefresh = board.render();
+        board.toggleTagFilter('hide'); const firstToggle = pending;
+        board.toggleTagFilter('hide'); const secondToggle = pending;
+        await Promise.all([burstRefresh, firstToggle, secondToggle]);
+        const burstStats = {reads, markdownRenders:rendered.length-burstRendersBefore, elapsedMs:Math.round(performance.now()-burstStarted)};
+        assert(reads === 159, 'file invalidation plus rapid tag clicks must share one read pass: '+JSON.stringify(burstStats));
+        assert(burstStats.markdownRenders <= burstLimit, 'overlapping refreshes must commit only the latest grid: '+JSON.stringify(burstStats));
+        assert(board.lastFiltered.length === 159, 'overlapping refreshes retain the final tag state');
+        reads = 0; plugin.cardsVersion++;
+        const closingRefresh = board.render();
+        await board.onClose();
+        const rendersAtClose = rendered.length;
+        await closingRefresh;
+        assert(rendered.length === rendersAtClose && board.contentEl.children.length === 0 && board.children.size === 0, 'closing during file reads must not resurrect Markdown components or render detached cards');
         await board.onClose(); board.contentEl.remove();
         return {checks,samples};
       }
 
       // Exercise the actual tag buttons and rendered grid, including untagged notes.
       const originalTags = files.map(file => metadata.get(file).tags);
+      // Exercise the toolbar against actual sorting, persistence, filters and saved columns.
+      const writesBeforeSort = writes.length;
+      const sortFiles = Array.from({length:4}, (_,index) => ({path:`SortFixture/${index}.md`,name:`${index}.md`,basename:String(index),stat:{ctime:100*(index+1),mtime:[800,500,600,700][index]}}));
+      files.push(...sortFiles);
+      sortFiles.forEach((file,index) => {metadata.set(file,{pinned:false,tags:[index===3?'hidden':'keep'],jotdrop_order:[2048,0,3072,1024][index]});text.set(file,`# Sort card ${index}`);});
+      let sortSaved,sortSaves=0,sortRefresh;
+      const sortViews=[];
+      const sortPlugin={...plugin,settings:{...plugin.settings,notesFolder:'SortFixture',archiveFolder:'SortFixture/Archive',sortMode:'manual',cardWidth:240,cardLayout:{columnCount:3,columns:Object.fromEntries(sortFiles.map((file,index)=>[file.path,[2,0,1,0][index]]))}},
+        saveSettings:async function(){sortSaves++;sortSaved=JSON.parse(JSON.stringify(this.settings));},
+        refreshViews(){this.cardsVersion++;sortRefresh=Promise.all(sortViews.map(view=>view.render()));}};
+      const makeSortView=(owner=sortPlugin)=>{
+        const board=makeView(owner);
+        Object.assign(board.contentEl.style,{width:'900px',height:'450px'});
+        const toolbar=board.contentEl.createDiv({cls:'jotdrop-toolbar'});
+        board.contentEl.prepend(toolbar);board.buildSortControl(toolbar);
+        board.filterBarEl=board.contentEl.createDiv({cls:'jotdrop-filter-bar'});
+        board.contentEl.insertBefore(board.filterBarEl,board.gridEl);
+        return board;
+      };
+      const sortView=makeSortView(),sortPeer=makeSortView();sortViews.push(sortView,sortPeer);
+      await Promise.all(sortViews.map(view=>view.render()));
+      const sortNames=()=>sortView.lastFiltered.map(card=>card.file.basename).join(',');
+      const sortColumns=()=>[...sortView.gridEl.querySelectorAll('.jotdrop-grid-col')].map(col=>[...col.children].map(card=>card.dataset.path).join(',')).join('|');
+      const manualColumns=sortColumns(),manualLayout=JSON.stringify(sortPlugin.settings.cardLayout),manualNotes=JSON.stringify(sortFiles.map(file=>metadata.get(file)));
+      const chooseSort=async title=>{
+        sortView.contentEl.querySelector('.jotdrop-sort-btn').click();
+        const menu=window.fixtureMenu;
+        assert(menu.items.map(item=>item.title).join('|')==='Manual order|Newest created first|Last edited first','toolbar offers exactly the three agreed modes');
+        assert(menu.items.filter(item=>item.checked).length===1,'menu checks the current mode');
+        await menu.items.find(item=>item.title===title).callback();await sortRefresh;
+      };
+      assert(sortNames()==='1,3,0,2','initial manual order uses saved note ranks');
+      await chooseSort('Manual order');assert(sortSaves===0,'selecting the current mode does not save or refresh');
+      await chooseSort('Newest created first');
+      assert(sortNames()==='3,2,1,0','newest mode uses creation time rather than modification time');
+      assert(sortSaved.sortMode==='created-desc','newest mode is persisted');
+      assert(sortPeer.contentEl.querySelector('.jotdrop-sort-btn').textContent.includes('Newest created first'),'other open views update their mode labels');
+      sortView.filterBarEl.querySelector('[data-tag="hidden"]').click();await tick();await tick();
+      await chooseSort('Last edited first');
+      assert(sortNames()==='0,2,1','modified mode sorts by modification time and retains excluded tags');
+      assert(sortSaved.sortMode==='modified-desc','modified mode is persisted');
+      const reopenedSort=makeSortView({...sortPlugin,settings:JSON.parse(JSON.stringify(sortSaved))});await reopenedSort.render();
+      assert(reopenedSort.lastFiltered.map(card=>card.file.basename).join(',')==='0,3,2,1','saved mode survives reopening');
+      assert(reopenedSort.contentEl.querySelector('.jotdrop-sort-btn').textContent.includes('Last edited first'),'reopened view shows the persisted mode');
+      await chooseSort('Manual order');
+      assert(sortNames()==='1,0,2','return to manual restores ranks while retaining the tag filter');
+      sortView.filterBarEl.querySelector('[data-tag="hidden"]').click();await tick();await tick();
+      assert(sortNames()==='1,3,0,2'&&sortColumns()===manualColumns,'return to manual restores exact columns and positions including hidden notes');
+      assert(JSON.stringify(sortPlugin.settings.cardLayout)===manualLayout&&JSON.stringify(sortFiles.map(file=>metadata.get(file)))===manualNotes,'switching sort modes never rewrites manual layout or note metadata');
+      sortPlugin.settings.sortMode='title-asc';sortPlugin.refreshViews();await sortRefresh;
+      assert(sortView.contentEl.querySelector('.jotdrop-sort-btn').textContent.includes('Title A-Z'),'toolbar accurately reflects existing advanced settings modes');
+      await sortView.moveCard(sortFiles[3].path,sortFiles[0].path,false);
+      assert(sortPlugin.settings.sortMode==='manual'&&sortView.contentEl.querySelector('.jotdrop-sort-btn').textContent.includes('Manual order'),'dragging from an automatic mode updates the toolbar to manual');
+      Object.assign(sortView.contentEl.style,{width:'280px'});
+      assert(sortView.contentEl.querySelector('.jotdrop-sort-btn').getBoundingClientRect().width<=280,'sort control fits a narrow pane');
+      await Promise.all([...sortViews,reopenedSort].map(view=>view.onClose()));
+      [...sortViews,reopenedSort].forEach(view=>view.contentEl.remove());
+      files.splice(files.indexOf(sortFiles[0]),sortFiles.length);
+      writes.splice(writesBeforeSort);
+
       const originalPinnedText = text.get(files[3]);
       text.set(files[3], originalPinnedText + '\nunique-search-needle');
       [['work'], ['work', 'archive'], [], ['archive']].forEach((tags, i) => metadata.get(files[i]).tags = tags);

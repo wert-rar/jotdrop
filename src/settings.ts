@@ -153,7 +153,7 @@ export class JotDropSettingTab extends PluginSettingTab {
       .addDropdown((dd) =>
         dd
           .addOptions({
-            manual: "Manual (drag cards)",
+            manual: t("sort_manual"),
             "modified-desc": t("sort_modified_desc"),
             "modified-asc": t("sort_modified_asc"),
             "created-desc": t("sort_created_desc"),

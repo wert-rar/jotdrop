@@ -1,5 +1,6 @@
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
+import type { SortMode } from "./settings";
 import { QuickCaptureModal } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { FolderPickerModal } from "./folderPicker";
@@ -114,6 +115,8 @@ export class JotDropView extends ItemView {
   private searchEl!: HTMLInputElement;
   private filterBarEl!: HTMLElement;
   private normalToolbarEl!: HTMLElement;
+  private sortButtonEl?: HTMLButtonElement;
+  private sortLabelEl?: HTMLElement;
   private selectionToolbarEl!: HTMLElement;
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
@@ -125,6 +128,8 @@ export class JotDropView extends ItemView {
   private lastFiltered: CardData[] = [];
   private filterCards: CardData[] | null = null;
   private filterCardsVersion = -1;
+  private cardRead: { version: number; promise: Promise<CardData[]> } | null = null;
+  private renderRequest = 0;
   private retainedCards = new Map<string, { element: HTMLElement; column: HTMLElement }>();
   private appendCardToLayout: ((card: CardData) => void) | null = null;
   private preserveCardColumns = false;
@@ -193,6 +198,8 @@ export class JotDropView extends ItemView {
       }, SEARCH_DEBOUNCE_MS);
     });
 
+    this.buildSortControl(this.normalToolbarEl);
+
     this.selectionToolbarEl = root.createDiv({
       cls: "jotdrop-toolbar jotdrop-selection-toolbar is-hidden",
     });
@@ -223,6 +230,44 @@ export class JotDropView extends ItemView {
     });
 
     await this.render();
+  }
+
+  private buildSortControl(toolbar: HTMLElement): void {
+    const button = toolbar.createEl("button", {
+      cls: "jotdrop-sort-btn",
+      attr: { type: "button", "aria-haspopup": "menu" },
+    });
+    this.sortButtonEl = button;
+    setIcon(button.createSpan({ cls: "jotdrop-sort-icon", attr: { "aria-hidden": "true" } }), "arrow-down-wide-narrow");
+    this.sortLabelEl = button.createSpan({ cls: "jotdrop-sort-label" });
+    setIcon(button.createSpan({ cls: "jotdrop-sort-icon", attr: { "aria-hidden": "true" } }), "chevron-down");
+    this.updateSortControl();
+    button.addEventListener("click", () => {
+      const menu = new Menu();
+      const modes: SortMode[] = ["manual", "created-desc", "modified-desc"];
+      for (const mode of modes) {
+        menu.addItem((item) => item
+          .setTitle(t(`sort_${mode.replace("-", "_")}`))
+          .setChecked(this.plugin.settings.sortMode === mode)
+          .onClick(async () => {
+            if (this.plugin.settings.sortMode === mode) return;
+            this.plugin.settings.sortMode = mode;
+            await this.plugin.saveSettings();
+            this.updateSortControl();
+            this.plugin.refreshViews();
+          }));
+      }
+      const bounds = button.getBoundingClientRect();
+      menu.showAtPosition({ x: bounds.left, y: bounds.bottom });
+    });
+  }
+
+  updateSortControl(): void {
+    if (!this.sortButtonEl || !this.sortLabelEl) return;
+    const label = t(`sort_${this.plugin.settings.sortMode.replace("-", "_")}`);
+    this.sortLabelEl.setText(label);
+    this.sortButtonEl.setAttribute("aria-label", `${t("settings_sort")}: ${label}`);
+    this.sortButtonEl.setAttribute("title", `${t("settings_sort")}: ${label}`);
   }
 
   private buildSelectionToolbar(): void {
@@ -667,6 +712,9 @@ export class JotDropView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    // Pending reads may finish after the view is closed; they must not render.
+    this.renderRequest++;
+    this.cardRead = null;
     // Release the mic stream if the view closes mid-recording.
     this.recorder?.discard();
     this.recorder = null;
@@ -690,10 +738,28 @@ export class JotDropView extends ItemView {
 
   async render(reuseCards = false): Promise<void> {
     if (!this.gridEl) return;
+    this.updateSortControl();
+    const request = ++this.renderRequest;
     // Visibility changes use the loaded snapshot; vault/settings refreshes reread it.
     const version = this.plugin.cardsVersion;
     const reuseSnapshot = reuseCards && this.filterCards !== null && this.filterCardsVersion === version;
-    const cards = reuseSnapshot ? this.filterCards! : await this.collectCards();
+    let cards: CardData[];
+    if (reuseSnapshot) {
+      cards = this.filterCards!;
+    } else {
+      // A vault refresh and tag clicks can overlap while cachedRead is pending.
+      // Share that read pass and let only the newest request update the grid.
+      const read = this.cardRead?.version === version
+        ? this.cardRead
+        : { version, promise: this.collectCards() };
+      this.cardRead = read;
+      try {
+        cards = await read.promise;
+      } finally {
+        if (this.cardRead === read) this.cardRead = null;
+      }
+    }
+    if (request !== this.renderRequest || version !== this.plugin.cardsVersion) return;
     const reuseLayout = reuseSnapshot && this.appendCardToLayout !== null && this.computeColumnCount() === this.lastColumnCount;
     this.filterCards = cards;
     this.filterCardsVersion = version;

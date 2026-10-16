@@ -367,6 +367,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       this.lastFiltered = cards.filter(card=>this.matchesFilters(card));
       if (placement) this.plugin.settings.cardLayout=placement.layout;
       this.plugin.settings.sortMode='manual';
+      this.updateSortControl();
       this.reflowCards(true);
       for (const card of changed) {
         this.plugin.suppressModifyOnce(card.file.path);
