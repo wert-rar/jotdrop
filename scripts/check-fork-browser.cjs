@@ -155,7 +155,6 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       const app = {
         metadataCache: {getFileCache: file => ({frontmatter: metadata.get(file)}),getTags:()=>({})},
         vault: {
-          configDir: '.obsidian', adapter: {write:async(file,value)=>{window.dragDiagnostics=JSON.parse(value);}},
           getMarkdownFiles:()=>files, cachedRead:async file=>'---\n'+JSON.stringify(metadata.get(file))+'\n---\n'+text.get(file), read:async file=>text.get(file),
           getAbstractFileByPath:()=>({}), createFolder:async()=>{},
           modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();return value;}
@@ -226,9 +225,6 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const nodes=[...board.gridEl.querySelectorAll('.jotdrop-card')];
         assert(nodes.length===7&&new Set(nodes.map(node=>node.dataset.path)).size===7,'all cards remain present once after refresh and consecutive moves');
         assert(board.gridEl.querySelector(`[data-path="${sourcePath}"]`).parentElement===board.gridEl.querySelectorAll('.jotdrop-grid-col')[1],'target column survives the next authoritative refresh');
-        await tick();
-        assert(window.dragDiagnostics.events.length<=80&&window.dragDiagnostics.events.some(event=>event.stage==='move-settled'),'temporary diagnostics record completed moves in a bounded journal');
-        assert(!JSON.stringify(window.dragDiagnostics).includes('DragRace')&&!JSON.stringify(window.dragDiagnostics).includes('Incoming note'),'temporary diagnostics exclude note names and Markdown');
         await board.onClose();board.contentEl.remove();
         return {checks};
       }
@@ -919,15 +915,37 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     fs.mkdirSync('work/verification', { recursive: true });
     await page.screenshot({ path: 'work/verification/modal-preview.png', fullPage: true });
     await page.setViewportSize({width:900,height:780});
-    await page.evaluate(async()=>{
+    const createMouseFixture = async () => page.evaluate(async()=>{
       const fixture=await window.createEmptyColumnMouseFixture();
       for(const type of ['dragstart','drop']) fixture.view.gridEl.addEventListener(type,event=>fixture.events.push({type:event.type,trusted:event.isTrusted}),true);
     });
+    await createMouseFixture();
     await page.locator('.jotdrop-card').dragTo(page.locator('.jotdrop-grid-col').nth(2),{targetPosition:{x:40,y:40}});
     await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2);
     assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'dragstart',trusted:true},{type:'drop',trusted:true}]);
     assert.equal(await page.locator('.jotdrop-grid-col').nth(2).locator('.jotdrop-card').count(),1,'real mouse drag moves the card into the empty column');
     await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
+    for (const area of ['gap', 'background']) {
+      await createMouseFixture();
+      const point = await page.evaluate(area => {
+        const grid=window.emptyColumnMouseFixture.view.gridEl;
+        grid.dataset.mouseDropGrid='true';
+        if (area==='background') grid.style.paddingBottom='40px';
+        const inner=grid.querySelector('.jotdrop-grid-inner'),right=inner.children[2].getBoundingClientRect();
+        const surface=area==='gap'?inner:grid,rect=surface.getBoundingClientRect();
+        const x=area==='gap'?right.left-rect.left-2:right.left-rect.left+15;
+        const y=area==='gap'?40:rect.height-8;
+        return {x,y,hitSurface:document.elementFromPoint(rect.left+x,rect.top+y)===surface,selector:area==='gap'?'.jotdrop-grid-inner':'[data-mouse-drop-grid]'};
+      },area);
+      assert(point.hitSurface,`native mouse targets the ${area} outside column elements`);
+      await page.locator('.jotdrop-card').dragTo(page.locator(point.selector),{targetPosition:{x:point.x,y:point.y}});
+      await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2,{},{timeout:10000});
+      await page.evaluate(()=>window.emptyColumnMouseFixture.view.orderQueue);
+      assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'dragstart',trusted:true},{type:'drop',trusted:true}],`native ${area} drop reaches the plugin`);
+      assert.equal(await page.locator('.jotdrop-grid-col').nth(2).locator('.jotdrop-card').count(),1,`${area} drop places one card in the nearest column`);
+      assert.equal(await page.evaluate(()=>window.emptyColumnMouseFixture.view.draggedPath),null,`${area} drop finishes dragging`);
+      await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
+    }
     await page.evaluate(()=>{document.body.innerHTML=window.masonryFixtureHTML;});
     await page.screenshot({ path: 'work/verification/masonry-preview.png', fullPage: true });
     await page.evaluate(() => { document.body.innerHTML = window.tagVisibilityPreviewHTML; });
@@ -935,6 +953,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     assert.equal(result.notices.some(message=>message.startsWith('JotDrop:')),false);
     console.log(`PASS: ${result.checks} browser integration checks (mock Obsidian services; real bundle, DOM and CSS).`);
     console.log('PASS: real browser mouse drag into an empty column (trusted dragstart and drop events).');
+    console.log('PASS: native drops in column gaps and free grid background select the nearest column and finish.');
     console.log('Preview: work/verification/modal-preview.png');
   } finally { await browser.close(); }
 })().catch(error=>{ console.error(error.message); process.exitCode=1; });

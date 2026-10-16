@@ -17,40 +17,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   const reportError = error => new Notice(`JotDrop: ${error.message}`);
   const run = action => event => { event.preventDefault(); void action(event).catch(reportError); };
 
-  // Temporary local diagnostics for a drag hang not reproduced by the browser fixture.
-  // Records event stages only: no note paths, titles, Markdown or settings contents.
-  const dragEvents = [];
-  let diagnosticWrite = Promise.resolve();
-  let diagnosticsDisabled = false;
-  function traceDrag(view, stage, details = {}) {
-    if (diagnosticsDisabled) return;
-    dragEvents.push({ time: Date.now(), stage, dragging: !!view.draggedPath, reordering: !!view.reordering, ...details });
-    if (dragEvents.length > 80) dragEvents.shift();
-    const payload = JSON.stringify({ build: 'drag-trace-2026-10-16-1', events: dragEvents });
-    const file = normalizePath(`${view.app.vault.configDir}/plugins/jotdrop/drag-diagnostics.json`);
-    diagnosticWrite = diagnosticWrite.then(() => {
-      if (!diagnosticsDisabled) return view.app.vault.adapter.write(file, payload);
-    }).catch(() => {
-      diagnosticsDisabled = true;
-      new Notice('JotDrop: unable to save drag diagnostics.');
-    });
-  }
-
-  const openView = View.prototype.onOpen;
-  View.prototype.onOpen = async function () {
-    let overRecorded = false;
-    for (const type of ['dragstart', 'dragover', 'drop', 'dragend']) {
-      this.registerDomEvent(this.contentEl, type, event => {
-        if (type === 'dragstart') overRecorded = false;
-        if (type === 'dragover' && overRecorded) return;
-        if (type === 'dragover') overRecorded = true;
-        traceDrag(this, `native:${type}`, { trusted: event.isTrusted, target: event.target.tagName, prevented: event.defaultPrevented, types: [...event.dataTransfer.types], selecting: this.selectionMode });
-      }, true);
-    }
-    await openView.call(this);
-    traceDrag(this, 'view-ready', { cards: this.gridEl.querySelectorAll('.jotdrop-card').length, columns: this.lastColumnCount, sort: this.plugin.settings.sortMode });
-  };
-
   function taskLines(markdown) {
     const lines = markdown.split('\n');
     const tokens = taskMarkdown.parse(markdown, {});
@@ -339,7 +305,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     return cards;
   };
   View.prototype.moveCard = function (sourcePath, targetPath, after, columnTarget) {
-    traceDrag(this, 'move-queued');
     const execute = () => this.performCardMove(sourcePath, targetPath, after, columnTarget);
     const operation = this.orderQueue ? this.orderQueue.then(execute, execute) : execute();
     this.orderQueue = operation;
@@ -372,7 +337,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   };
   View.prototype.performCardMove = async function (sourcePath, targetPath, after, columnTarget) {
     if (sourcePath === targetPath) return;
-    traceDrag(this, 'move-start', { pendingRead: !!this.cardRead });
     // A refresh already awaiting file reads must not replace the dragged DOM.
     if (this.cardRead) this.renderPending = true;
     this.renderRequest++;
@@ -385,7 +349,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       const source = cards.find(card => card.file.path === sourcePath);
       const target = cards.find(card => card.file.path === targetPath);
       const placement=this.captureCardPlacement(sourcePath,targetPath,after,columnTarget);
-      traceDrag(this, 'placement', { sourceFound: !!source, targetFound: !!target, placementFound: !!placement, unchanged: !!placement?.unchanged });
       if (!source || (!target && !columnTarget) || (columnTarget && !placement)) throw new Error('A dragged note has moved or disappeared. Refresh the board.');
       if (placement?.unchanged) return;
       const pinned = columnTarget ? columnTarget.pinned : target.meta.pinned;
@@ -409,7 +372,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       this.plugin.settings.sortMode='manual';
       this.updateSortControl();
       this.reflowCards(true);
-      traceDrag(this, 'layout-applied', { writes: changed.length, nodes: this.gridEl.querySelectorAll('.jotdrop-card').length });
       for (const card of changed) {
         this.plugin.suppressModifyOnce(card.file.path);
         try {
@@ -422,12 +384,8 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
           throw error;
         }
       }
-      traceDrag(this, 'notes-written', { count: changed.length });
-      traceDrag(this, 'settings-save-start');
       if (placement || previousSort !== 'manual') await this.plugin.saveSettings();
-      traceDrag(this, 'settings-save-end');
     } catch (error) {
-      traceDrag(this, 'move-error', { name: error.name });
       // Reload authoritative files after a failed write, undoing the optimistic DOM move.
       this.plugin.settings.cardLayout=previousLayout;
       this.plugin.settings.sortMode=previousSort;
@@ -436,9 +394,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       throw error;
     } finally {
       this.reordering = false;
-      traceDrag(this, 'move-finish', { refreshPending: !!this.renderPending });
       if (this.renderPending) { this.renderPending = false; await this.render(); }
-      traceDrag(this, 'move-settled');
     }
   };
   View.prototype.reflowCards = function (animate = false) {
@@ -532,29 +488,50 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     this.masonryObserver.observe(card);
   };
   View.prototype.registerColumnDrops = function (inner) {
-    for (const column of inner.children) {
-      if (column.jotdropDropRegistered) continue;
-      column.jotdropDropRegistered = true;
-      column.addEventListener('dragover', event => {
-        if (!this.draggedPath || this.selectionMode || event.target.closest('.jotdrop-card')) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        column.classList.add('jotdrop-column-drop');
-      });
-      column.addEventListener('dragleave', () => column.classList.remove('jotdrop-column-drop'));
-      column.addEventListener('drop', run(async event => {
-        column.classList.remove('jotdrop-column-drop');
-        if (this.selectionMode || event.target.closest('.jotdrop-card')) return;
-        const source = event.dataTransfer.getData('application/x-jotdrop-note');
-        traceDrag(this, 'column-drop', { payload: !!source, localSource: source === this.draggedPath, column: [...inner.children].indexOf(column) });
-        if (!source || source !== this.draggedPath) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const target = [...column.children].filter(card=>card.dataset.path!==source).at(-1);
-        if (target) await this.moveCard(source, target.dataset.path, true);
-        else await this.moveCard(source, null, false, {pinned:inner.dataset.pinned==='true',index:[...inner.children].indexOf(column),count:inner.children.length});
-      }));
-    }
+    const grid = this.gridEl;
+    if (grid.jotdropDropRegistered) return;
+    grid.jotdropDropRegistered = true;
+    const clear = () => grid.querySelectorAll('.jotdrop-column-drop').forEach(column => column.classList.remove('jotdrop-column-drop'));
+    const columnAt = event => {
+      const direct = event.target.closest('.jotdrop-grid-col');
+      if (direct) return direct;
+      // Flex gaps and the free grid background belong to the nearest visible column.
+      let nearest = null, distance = Infinity;
+      for (const column of grid.querySelectorAll('.jotdrop-grid-col')) {
+        const rect = column.getClientRects()[0];
+        if (!rect) continue;
+        const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
+        const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
+        const squared = dx * dx + dy * dy;
+        if (squared < distance) { nearest = column; distance = squared; }
+      }
+      return nearest;
+    };
+    grid.addEventListener('dragover', event => {
+      if (!this.draggedPath || this.selectionMode || event.target.closest('.jotdrop-card')) return;
+      const column = columnAt(event);
+      if (!column) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      clear();
+      column.classList.add('jotdrop-column-drop');
+    });
+    grid.addEventListener('dragleave', event => {
+      if (!event.relatedTarget || !grid.contains(event.relatedTarget)) clear();
+    });
+    grid.addEventListener('drop', run(async event => {
+      clear();
+      if (this.selectionMode || event.target.closest('.jotdrop-card')) return;
+      const source = event.dataTransfer.getData('application/x-jotdrop-note');
+      if (!source || source !== this.draggedPath) return;
+      const column = columnAt(event);
+      if (!column) return;
+      event.stopPropagation();
+      const columns = column.parentElement;
+      const target = [...column.children].filter(card=>card.dataset.path!==source).at(-1);
+      if (target) await this.moveCard(source, target.dataset.path, true);
+      else await this.moveCard(source, null, false, {pinned:columns.dataset.pinned==='true',index:[...columns.children].indexOf(column),count:columns.children.length});
+    }));
   };
   const render = View.prototype.render;
   View.prototype.render = async function (...args) {
@@ -615,7 +592,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     this.registerColumnDrops(parent.parentElement);
     card.draggable = !this.selectionMode;
     card.addEventListener('dragstart', event => {
-      traceDrag(this, 'card-dragstart', { blockedByControl: !!event.target.closest('a, input, button'), selecting: this.selectionMode });
       if (this.selectionMode || event.target.closest('a, input, button')) { event.preventDefault(); return; }
       this.draggedPath = data.file.path;
       event.dataTransfer.setData('application/x-jotdrop-note', data.file.path);
@@ -638,7 +614,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.addEventListener('drop', run(async event => {
       event.stopPropagation();
       const source = event.dataTransfer.getData('application/x-jotdrop-note');
-      traceDrag(this, 'card-drop', { payload: !!source, localSource: source === this.draggedPath });
       const after = card.classList.contains('jotdrop-drop-after');
       clearDrop();
       if (source && source === this.draggedPath) await this.moveCard(source, data.file.path, after);
