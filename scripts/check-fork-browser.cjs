@@ -273,6 +273,42 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         assert(nodes.length===7&&new Set(nodes.map(node=>node.dataset.path)).size===7,'all cards remain present once after refresh and consecutive moves');
         assert(board.gridEl.querySelector(`[data-path="${sourcePath}"]`).parentElement===board.gridEl.querySelectorAll('.jotdrop-grid-col')[1],'target column survives the next authoritative refresh');
         await board.onClose();board.contentEl.remove();
+        // Native drags: a refresh during dragstart → dragend must not detach the carried card.
+        window.createNativeRefreshFixture=async mode=>{
+          document.body.replaceChildren();
+          const nativeFiles=Array.from({length:6},(_,i)=>({path:`NativeRace/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
+          nativeFiles.forEach((file,i)=>{metadata.set(file,{pinned:false,tags:['keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
+          app.vault.getMarkdownFiles=()=>nativeFiles;
+          Object.assign(plugin.settings,{notesFolder:'NativeRace',archiveFolder:'NativeRace/Archive',sortMode:'manual',cardWidth:240,cardLayout:undefined});
+          const nativeBoard=makeView();Object.assign(nativeBoard.contentEl.style,{width:'900px',height:'500px'});
+          document.body.createDiv({attr:{id:'native-outside'}}).style.height='200px';
+          await nativeBoard.render();await tick();
+          const nativeSource=nativeBoard.gridEl.querySelector('[data-path="NativeRace/0.md"]');
+          const incoming={path:'NativeRace/incoming.md',name:'incoming.md',basename:'incoming',stat:{ctime:0,mtime:0}};
+          const addIncoming=()=>{nativeFiles.push(incoming);metadata.set(incoming,{pinned:false,tags:['keep'],jotdrop_order:6144});text.set(incoming,'# Incoming note');};
+          const state=window.nativeRefreshFixture={board:nativeBoard,events:[],sourceAtDrop:null,refresh:null};
+          document.addEventListener('drop',event=>{state.events.push({type:'drop',trusted:event.isTrusted});state.sourceAtDrop=nativeSource.isConnected;},true);
+          nativeSource.addEventListener('dragend',event=>state.events.push({type:'dragend',trusted:event.isTrusted}));
+          if(mode==='read'){
+            const read=app.vault.cachedRead;let releaseRead,paused=false;
+            const gate=new Promise(resolve=>{releaseRead=resolve;});
+            app.vault.cachedRead=async file=>{const value=await read(file);if(!paused){paused=true;await gate;}return value;};
+            addIncoming();state.refresh=nativeBoard.render();
+            nativeSource.addEventListener('dragstart',()=>{app.vault.cachedRead=read;releaseRead();});
+          } else {
+            nativeSource.addEventListener('dragstart',()=>{addIncoming();state.refresh=nativeBoard.render();});
+          }
+        };
+        window.readNativeRefreshFixture=async()=>{
+          const state=window.nativeRefreshFixture;
+          await state.refresh;await state.board.orderQueue;await tick();
+          const nodes=[...state.board.gridEl.querySelectorAll('.jotdrop-card')].map(node=>node.dataset.path);
+          const observed={events:state.events,sourceAtDrop:state.sourceAtDrop,draggedPath:state.board.draggedPath,reordering:!!state.board.reordering,
+            nodes:nodes.length,unique:new Set(nodes).size,incoming:nodes.includes('NativeRace/incoming.md'),
+            column:plugin.settings.cardLayout?.columns['NativeRace/0.md'],order:metadata.get(app.vault.getMarkdownFiles()[0]).jotdrop_order};
+          await state.board.onClose();
+          return observed;
+        };
         return {checks};
       }
       if (tagRenderOnly) {
@@ -960,7 +996,24 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       return;
     }
     if (dragRefreshOnly) {
-      console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks.`);
+      // A detached drag source stalls the native drag indefinitely; fail instead of hanging.
+      const within = (promise, label) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`native drag stalled: ${label}`)), 10000))]);
+      await page.setViewportSize({ width: 1000, height: 800 });
+      for (const mode of ['refresh', 'read', 'cancel']) {
+        await page.evaluate(mode => window.createNativeRefreshFixture(mode), mode);
+        const target = mode === 'cancel' ? '#native-outside' : '[data-path="NativeRace/1.md"]';
+        await within(page.locator('[data-path="NativeRace/0.md"]').dragTo(page.locator(target), { sourcePosition: { x: 8, y: 8 }, targetPosition: { x: 8, y: 8 } }), mode);
+        await page.waitForFunction(() => document.querySelector('[data-path="NativeRace/incoming.md"]'), null, { timeout: 5000 });
+        const observed = await page.evaluate(() => window.readNativeRefreshFixture());
+        const detail = `${mode}: ${JSON.stringify(observed)}`;
+        assert.deepEqual(observed.events, mode === 'cancel' ? [{ type: 'dragend', trusted: true }] : [{ type: 'drop', trusted: true }, { type: 'dragend', trusted: true }], `native drag completes during a ${detail}`);
+        if (mode !== 'cancel') assert.equal(observed.sourceAtDrop, true, `carried card stays mounted until drop: ${detail}`);
+        assert(observed.incoming && observed.nodes === 7 && observed.unique === 7, `deferred refresh applies after the drag: ${detail}`);
+        assert(observed.draggedPath === null && !observed.reordering, `drag state is released: ${detail}`);
+        if (mode === 'cancel') assert(observed.column === undefined && observed.order === 0, `cancelled drag writes nothing: ${detail}`);
+        else assert.equal(observed.column, 1, `dropped note keeps the chosen column: ${detail}`);
+      }
+      console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks; 3 native drags with refreshes during the drag.`);
       return;
     }
     if (tagRenderOnly) {

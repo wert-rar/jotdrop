@@ -541,7 +541,8 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   };
   const render = View.prototype.render;
   View.prototype.render = async function (...args) {
-    if (this.reordering) { this.renderPending=true; return; }
+    // Rebuilding the grid would detach the carried card and stall the native drag.
+    if (this.reordering || this.draggedPath) { this.renderPending=true; return; }
     return render.apply(this, args);
   };
   const renderCards = View.prototype.renderCards;
@@ -600,6 +601,9 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.addEventListener('dragstart', event => {
       if (this.selectionMode || event.target.closest('a, input, button')) { event.preventDefault(); return; }
       this.draggedPath = data.file.path;
+      // A refresh already awaiting file reads is replayed after the drag ends.
+      if (this.cardRead) this.renderPending = true;
+      this.renderRequest++;
       event.dataTransfer.setData('application/x-jotdrop-note', data.file.path);
       event.dataTransfer.effectAllowed = 'move';
       card.classList.add('is-dragging');
@@ -629,6 +633,8 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       card.classList.remove('is-dragging');
       this.gridEl.querySelectorAll('.jotdrop-drop-before, .jotdrop-drop-after, .jotdrop-column-drop').forEach(el => el.classList.remove('jotdrop-drop-before', 'jotdrop-drop-after', 'jotdrop-column-drop'));
       if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
+      // A drop hands the deferred refresh to performCardMove; a cancelled drag runs it here.
+      if (this.renderPending && !this.reordering) { this.renderPending=false; void this.render().catch(reportError); }
     });
   };
 }
