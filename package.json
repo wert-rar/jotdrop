@@ -19,7 +19,7 @@
     "android:test-release": "node scripts/build-android-release.mjs --test",
     "android:verify": "node scripts/verify-android-apk.mjs",
     "android:install": "node scripts/install-android-release.mjs",
-    "check:fork": "node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh"
+    "check:fork": "node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh && node scripts/check-fork-browser.cjs --drag-window"
   },
   "keywords": [
     "obsidian",

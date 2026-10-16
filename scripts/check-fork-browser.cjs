@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const tagPerformanceOnly = process.argv.includes('--tag-performance');
 const tagRenderOnly = process.argv.includes('--tag-render-performance');
 const dragRefreshOnly = process.argv.includes('--drag-refresh');
+const dragWindowOnly = process.argv.includes('--drag-window');
 const sampleRoot = process.argv.find(arg => arg.startsWith('--vault-sample='))?.slice('--vault-sample='.length);
 const readSamples = dir => fs.readdirSync(dir, {withFileTypes:true}).flatMap(entry => {
   if (entry.name.startsWith('.') || entry.name === 'Archive') return [];
@@ -144,7 +145,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     });
     const installed = fs.readFileSync('main.js', 'utf8');
     await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
-    const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,sampleMarkdown}) => {
+    const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,dragWindowOnly,sampleMarkdown}) => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
       const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -185,6 +186,52 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
         return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
       };
+      if (dragWindowOnly) {
+        const NativeObserver=window.IntersectionObserver;
+        let loadNext;
+        window.IntersectionObserver=class {
+          constructor(callback){loadNext=()=>callback([{isIntersecting:true}]);}
+          observe(){}
+          disconnect(){}
+        };
+        const windowFiles=Array.from({length:121},(_,i)=>({path:`DragWindow/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:121-i,mtime:121-i}}));
+        windowFiles.forEach((file,i)=>{metadata.set(file,{pinned:i<16,tags:[i===120?'irrelevant':'keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
+        app.vault.getMarkdownFiles=()=>windowFiles;
+        const owner={...plugin,settings:{...plugin.settings,notesFolder:'DragWindow',archiveFolder:'DragWindow/Archive',sortMode:'manual',cardWidth:240,cardLayout:{columnCount:6,columns:Object.fromEntries(windowFiles.map((file,i)=>[file.path,i<16?0:i%3]))}}};
+        const board=makeView(owner);Object.assign(board.contentEl.style,{width:'1580px',height:'600px'});
+        await board.render();
+        board.gridEl.querySelectorAll('.jotdrop-card').forEach(node=>node.style.height='200px');
+        await tick();
+        assert(board.gridEl.querySelectorAll('.jotdrop-card').length===60,'window fixture initially mounts 60 of 121 notes');
+        const sourcePath=windowFiles[16].path;
+        const source=board.gridEl.querySelector(`[data-path="${sourcePath}"]`);
+        const column=board.gridEl.querySelector('.jotdrop-grid-inner[data-pinned="false"]').children[3];
+        const transfer=new DataTransfer();
+        source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+        column.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
+        await board.orderQueue;
+        source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:transfer}));
+        assert(source.parentElement===column,'windowed drop immediately reaches the chosen empty column');
+        board.excludedTags.add('irrelevant');
+        await board.render(true);
+        assert(source.isConnected&&source.parentElement===column,'tag filtering after a windowed drop keeps the moved note visible in its chosen column');
+        const unpinnedColumn=board.gridEl.querySelector('.jotdrop-grid-inner[data-pinned="false"]').children[4];
+        const pinnedPath=windowFiles[0].path;
+        await board.moveCard(pinnedPath,null,false,{pinned:false,index:4,count:6});
+        await board.render(true);
+        assert(board.gridEl.querySelector(`[data-path="${pinnedPath}"]`)?.parentElement===unpinnedColumn,'unpinning into an empty column keeps the moved note within the visible window');
+        await board.render();
+        const refreshed=board.gridEl.querySelector(`[data-path="${sourcePath}"]`);
+        assert(refreshed&&[...refreshed.parentElement.parentElement.children].indexOf(refreshed.parentElement)===3,'rereading saved notes preserves the first moved note in its column');
+        await board.render(true);
+        loadNext();
+        const loaded=[...board.gridEl.querySelectorAll('.jotdrop-card')];
+        assert(loaded.length===120&&new Set(loaded.map(node=>node.dataset.path)).size===120,'next window appends each matching note once');
+        assert(loaded.every(node=>[...node.parentElement.parentElement.children].indexOf(node.parentElement)===owner.settings.cardLayout.columns[node.dataset.path]),'notes loaded after filtering respect saved manual columns');
+        await board.onClose();
+        window.IntersectionObserver=NativeObserver;
+        return {checks};
+      }
       if (dragRefreshOnly) {
         const raceFiles=Array.from({length:6},(_,i)=>({path:`DragRace/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
         raceFiles.forEach((file,i)=>{metadata.set(file,{pinned:false,tags:['keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
@@ -907,7 +954,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
       return { checks, notices, writes:writes.length };
-    }, {tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,sampleMarkdown});
+    }, {tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,dragWindowOnly,sampleMarkdown});
+    if (dragWindowOnly) {
+      console.log(`PASS: ${result.checks} windowed drag and filter checks.`);
+      return;
+    }
     if (dragRefreshOnly) {
       console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks.`);
       return;

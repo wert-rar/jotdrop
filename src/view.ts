@@ -848,6 +848,11 @@ export class JotDropView extends ItemView {
         column = restCols[restCount % columnCount];
         restCount++;
       }
+      // Filtering keeps existing stacks and skips rebalancing. Newly loaded
+      // cards must therefore enter their saved manual column immediately.
+      const layout = this.plugin.settings.sortMode === 'manual' ? this.plugin.settings.cardLayout : null;
+      const savedColumn = layout?.columnCount === columnCount ? layout.columns[c.file.path] : undefined;
+      if (savedColumn !== undefined) column = column.parentElement!.children[savedColumn] as HTMLElement;
       this.renderCard(column, c);
       this.retainedCards.set(c.file.path, { element: column.lastElementChild as HTMLElement, column });
     };

@@ -353,7 +353,13 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       if (placement?.unchanged) return;
       const pinned = columnTarget ? columnTarget.pinned : target.meta.pinned;
       const group = cards.filter(card => card !== source && card.meta.pinned === pinned);
-      group.splice(target ? group.indexOf(target) + Number(after) : group.length, 0, source);
+      const mounted = new Set([...this.gridEl.querySelectorAll('.jotdrop-card')].map(node => node.dataset.path));
+      // An empty column has no rank target. Keep an existing group's position;
+      // appending to all notes would move a visible card beyond the render window.
+      const insertion = target ? group.indexOf(target) + Number(after)
+        : source.meta.pinned === pinned ? cards.filter(card => card.meta.pinned === pinned).indexOf(source)
+        : group.findLastIndex(card => mounted.has(card.file.path)) + 1;
+      group.splice(insertion, 0, source);
       const previousGroup = cards.filter(card=>card.meta.pinned===pinned);
       if (!placement && group.length===previousGroup.length && group.every((card,index)=>card===previousGroup[index])) return;
       const index = group.indexOf(source);
