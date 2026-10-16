@@ -125,11 +125,14 @@ export class JotDropView extends ItemView {
   private lastFiltered: CardData[] = [];
   private filterCards: CardData[] | null = null;
   private filterCardsVersion = -1;
+  private retainedCards = new Map<string, { element: HTMLElement; column: HTMLElement }>();
+  private appendCardToLayout: ((card: CardData) => void) | null = null;
+  private preserveCardColumns = false;
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
   // Windowed rendering state. renderLimit survives re-renders (selection
   // toggles, external modifies) so the scroll position is not thrown away;
-  // it resets to one chunk whenever the filter set changes.
+  // Text search resets it to one chunk; tag visibility keeps the loaded window.
   private renderLimit = RENDER_CHUNK;
   private sentinelObserver: IntersectionObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -673,6 +676,9 @@ export class JotDropView extends ItemView {
     this.resizeObserver = null;
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
     if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+    this.retainedCards.clear();
+    this.appendCardToLayout = null;
+    this.filterCards = null;
     this.contentEl.empty();
   }
 
@@ -686,15 +692,22 @@ export class JotDropView extends ItemView {
     if (!this.gridEl) return;
     // Visibility changes use the loaded snapshot; vault/settings refreshes reread it.
     const version = this.plugin.cardsVersion;
-    const cards = reuseCards && this.filterCards !== null && this.filterCardsVersion === version
-      ? this.filterCards
-      : await this.collectCards();
+    const reuseSnapshot = reuseCards && this.filterCards !== null && this.filterCardsVersion === version;
+    const cards = reuseSnapshot ? this.filterCards! : await this.collectCards();
+    const reuseLayout = reuseSnapshot && this.appendCardToLayout !== null && this.computeColumnCount() === this.lastColumnCount;
     this.filterCards = cards;
     this.filterCardsVersion = version;
-    this.renderCards(cards);
+    this.renderCards(cards, reuseLayout);
   }
 
-  private renderCards(cards: CardData[]): void {
+  private renderCards(cards: CardData[], reuseLayout = false): void {
+    this.preserveCardColumns = reuseLayout;
+    if (reuseLayout) {
+      this.filterRenderedCards(cards);
+      return;
+    }
+    this.retainedCards.clear();
+    this.appendCardToLayout = null;
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
@@ -716,29 +729,7 @@ export class JotDropView extends ItemView {
     if (this.selectionMode) this.updateSelectionToolbar();
 
     if (filtered.length === 0) {
-      const empty = this.gridEl.createDiv({ cls: "jotdrop-empty" });
-      if (cards.length === 0) {
-        empty.createEl("h3", { text: t("empty_no_notes_title") });
-        empty.createEl("p", { text: t("empty_no_notes_desc") });
-        const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
-        appHint.appendText(t("empty_no_notes_app_hint") + " ");
-        appHint.createEl("a", {
-          cls: "jotdrop-empty-app-link",
-          text: t("empty_no_notes_app_link"),
-          attr: {
-            href: "https://github.com/Diexar-Labs/jotdrop#install",
-            target: "_blank",
-            rel: "noopener noreferrer",
-          },
-        });
-      } else {
-        empty.createEl("h3", { text: t("empty_no_results") });
-        const clearBtn = empty.createEl("button", {
-          cls: "jotdrop-empty-clear",
-          text: t("empty_no_results_clear"),
-        });
-        clearBtn.addEventListener("click", () => this.clearAllFilters());
-      }
+      this.renderEmpty(cards);
       return;
     }
 
@@ -768,13 +759,15 @@ export class JotDropView extends ItemView {
     let pinnedCount = 0;
     let restCount = 0;
     const appendCard = (c: CardData): void => {
+      let column: HTMLElement;
       if (c.meta.pinned) {
         if (!pinnedCols) {
           const section = this.gridEl.createDiv({ cls: "jotdrop-section" });
+          this.gridEl.prepend(section);
           section.createDiv({ cls: "jotdrop-section-label", text: t("section_pinned") });
           pinnedCols = makeColumns(section);
         }
-        this.renderCard(pinnedCols[pinnedCount % columnCount], c);
+        column = pinnedCols[pinnedCount % columnCount];
         pinnedCount++;
       } else {
         if (!restCols) {
@@ -786,11 +779,20 @@ export class JotDropView extends ItemView {
             restCols = makeColumns(this.gridEl);
           }
         }
-        this.renderCard(restCols[restCount % columnCount], c);
+        column = restCols[restCount % columnCount];
         restCount++;
       }
+      this.renderCard(column, c);
+      this.retainedCards.set(c.file.path, { element: column.lastElementChild as HTMLElement, column });
     };
+    this.appendCardToLayout = appendCard;
+    this.renderWindow(ordered, appendCard, true);
+  }
 
+  private renderWindow(ordered: CardData[], appendCard: (card: CardData) => void, rebalance: boolean): void {
+    this.sentinelObserver?.disconnect();
+    this.sentinelObserver = null;
+    this.gridEl.querySelector('.jotdrop-grid-sentinel')?.remove();
     let renderedCount = 0;
     const renderUpTo = (n: number): void => {
       const target = Math.min(n, ordered.length);
@@ -799,7 +801,8 @@ export class JotDropView extends ItemView {
         renderedCount++;
       }
       this.renderLimit = Math.max(this.renderLimit, renderedCount);
-      this.reflowCards();
+      this.updateSectionVisibility();
+      if (rebalance) this.reflowCards();
     };
 
     renderUpTo(this.renderLimit);
@@ -808,7 +811,7 @@ export class JotDropView extends ItemView {
       const sentinel = this.gridEl.createDiv({ cls: "jotdrop-grid-sentinel" });
       const observer = new IntersectionObserver(
         (entries) => {
-          if (!entries.some((e) => e.isIntersecting)) return;
+          if (this.sentinelObserver !== observer || !entries.some((e) => e.isIntersecting)) return;
           renderUpTo(renderedCount + RENDER_CHUNK);
           if (renderedCount >= ordered.length) {
             observer.disconnect();
@@ -826,6 +829,69 @@ export class JotDropView extends ItemView {
       );
       observer.observe(sentinel);
       this.sentinelObserver = observer;
+    }
+  }
+
+  private filterRenderedCards(cards: CardData[]): void {
+    this.sentinelObserver?.disconnect();
+    this.renderFilterBar(cards);
+    const filtered = cards.filter(card => this.matchesFilters(card));
+    this.lastFiltered = filtered;
+    if (this.selectionMode) this.updateSelectionToolbar();
+    const ordered = [...filtered.filter(card => card.meta.pinned), ...filtered.filter(card => !card.meta.pinned)];
+    const ranks = new Map(ordered.map((card, index) => [card.file.path, index]));
+    const visible = new Set(ordered.slice(0, this.renderLimit).map(card => card.file.path));
+    for (const [path, entry] of this.retainedCards) {
+      if (entry.element.parentElement) entry.column = entry.element.parentElement;
+      if (!visible.has(path)) entry.element.remove();
+    }
+    this.gridEl.querySelector('.jotdrop-empty')?.remove();
+    this.renderWindow(ordered, card => {
+      const entry = this.retainedCards.get(card.file.path);
+      if (!entry) {
+        this.appendCardToLayout!(card);
+      } else if (!entry.element.parentElement) {
+        const next = Array.from(entry.column.children).find(element =>
+          ranks.get((element as HTMLElement).dataset.path!)! > ranks.get(card.file.path)!
+        );
+        entry.column.insertBefore(entry.element, next ?? null);
+      }
+    }, false);
+    if (filtered.length === 0) this.renderEmpty(cards);
+  }
+
+  private updateSectionVisibility(): void {
+    for (const inner of Array.from(this.gridEl.querySelectorAll<HTMLElement>('.jotdrop-grid-inner'))) {
+      const visible = inner.querySelector('.jotdrop-card') !== null;
+      const section = inner.parentElement!;
+      if (section.classList.contains('jotdrop-section')) section.style.display = visible ? '' : 'none';
+      inner.style.display = visible ? '' : 'none';
+    }
+  }
+
+  private renderEmpty(cards: CardData[]): void {
+    const empty = this.gridEl.createDiv({ cls: "jotdrop-empty" });
+    if (cards.length === 0) {
+      empty.createEl("h3", { text: t("empty_no_notes_title") });
+      empty.createEl("p", { text: t("empty_no_notes_desc") });
+      const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
+      appHint.appendText(t("empty_no_notes_app_hint") + " ");
+      appHint.createEl("a", {
+        cls: "jotdrop-empty-app-link",
+        text: t("empty_no_notes_app_link"),
+        attr: {
+          href: "https://github.com/Diexar-Labs/jotdrop#install",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+      });
+    } else {
+      empty.createEl("h3", { text: t("empty_no_results") });
+      const clearBtn = empty.createEl("button", {
+        cls: "jotdrop-empty-clear",
+        text: t("empty_no_results_clear"),
+      });
+      clearBtn.addEventListener("click", () => this.clearAllFilters());
     }
   }
 
@@ -887,7 +953,6 @@ export class JotDropView extends ItemView {
     showAll.addEventListener("click", () => {
       this.excludedTags.clear();
       this.hideUntagged = false;
-      this.renderLimit = RENDER_CHUNK;
       void this.render(true);
     });
     const hideAll = actions.createEl("button", {
@@ -899,7 +964,6 @@ export class JotDropView extends ItemView {
     hideAll.addEventListener("click", () => {
       for (const tag of tagFreq.keys()) this.excludedTags.add(tag);
       this.hideUntagged = true;
-      this.renderLimit = RENDER_CHUNK;
       void this.render(true);
     });
 
@@ -926,7 +990,6 @@ export class JotDropView extends ItemView {
       chip.createSpan({ cls: "jotdrop-filter-chip-label", text: t("tag_untagged") });
       chip.addEventListener("click", () => {
         this.hideUntagged = !this.hideUntagged;
-        this.renderLimit = RENDER_CHUNK;
         void this.render(true);
       });
     }
@@ -966,7 +1029,6 @@ export class JotDropView extends ItemView {
   private toggleTagFilter(tag: string): void {
     if (this.excludedTags.has(tag)) this.excludedTags.delete(tag);
     else this.excludedTags.add(tag);
-    this.renderLimit = RENDER_CHUNK;
     void this.render(true);
   }
 
@@ -975,7 +1037,6 @@ export class JotDropView extends ItemView {
     this.hideUntagged = false;
     this.query = "";
     if (this.searchEl) this.searchEl.value = "";
-    this.renderLimit = RENDER_CHUNK;
     void this.render(true);
   }
 

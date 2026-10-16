@@ -394,6 +394,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     }
   };
   View.prototype.reflowCards = function (animate = false) {
+    if (this.preserveCardColumns && !animate) return;
     if (!this.gridEl?.isConnected || !this.lastFiltered) return;
     const nodes = new Map([...this.gridEl.querySelectorAll('.jotdrop-card')].map(node=>[node.dataset.path,node]));
     const positions = new Map(animate ? [...nodes.values()].map(node=>[node,node.getBoundingClientRect()]) : []);
@@ -449,6 +450,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     }
   };
   View.prototype.scheduleMasonryLayout = function () {
+    if (this.preserveCardColumns) return;
     if (this.masonryFrame != null) return;
     const win=this.contentEl.ownerDocument.defaultView;
     this.masonryFrame=win.requestAnimationFrame(()=>{
@@ -511,9 +513,10 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     return render.apply(this, args);
   };
   const renderCards = View.prototype.renderCards;
-  View.prototype.renderCards = function (cards) {
-    // Keep the existing board alive while a fresh snapshot is loading.
+  View.prototype.renderCards = function (cards, reuseLayout = false) {
+    // Visibility changes retain Markdown components and existing column stacks.
     this.stopMasonryObservation();
+    if (reuseLayout) return renderCards.call(this, cards, true);
     const scroll = this.contentEl.scrollTop;
     const height = this.gridEl?.style.minHeight;
     if (this.gridEl) this.gridEl.style.minHeight=`${this.gridEl.getBoundingClientRect().height}px`;

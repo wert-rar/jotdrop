@@ -1,14 +1,25 @@
 // Isolated browser integration test: actual installed bundle + mocked Obsidian services.
-// Never opens the real vault or writes user notes. MarkdownRenderer is an API-contract stub.
+// Default tests use disposable notes. Optional --vault-sample reads Markdown locally; never writes user notes.
+// MarkdownRenderer is an API-contract stub, not the live Obsidian renderer.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const tagPerformanceOnly = process.argv.includes('--tag-performance');
+const tagRenderOnly = process.argv.includes('--tag-render-performance');
+const sampleRoot = process.argv.find(arg => arg.startsWith('--vault-sample='))?.slice('--vault-sample='.length);
+const readSamples = dir => fs.readdirSync(dir, {withFileTypes:true}).flatMap(entry => {
+  if (entry.name.startsWith('.') || entry.name === 'Archive') return [];
+  const name = path.join(dir, entry.name);
+  return entry.isDirectory() ? readSamples(name) : entry.name.endsWith('.md') ? [{content:fs.readFileSync(name,'utf8'),mtime:fs.statSync(name).mtimeMs}] : [];
+});
+const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-a.mtime).map(note=>note.content) : null;
+
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 760, height: 780 } });
+    await page.route('**/*', route => route.abort());
     await page.setContent('<!doctype html><html><head></head><body></body></html>');
     await page.addScriptTag({ path: path.join(path.dirname(require.resolve('markdown-it')), 'browser/markdown-it.umd.min.js') });
     await page.addStyleTag({ content: `body {font:14px Arial;background:#eee;color:#222} :root {--background-primary:white;--background-secondary:#f7f7f7;--background-modifier-border:#ddd;--text-normal:#222;--text-muted:#777;--interactive-accent:#9270ff;--background-modifier-hover:#eee} .modal {width:530px;margin:20px auto;background:white;border:1px solid #ccc;border-radius:12px} .modal-title {font-size:20px;font-weight:600} button,input,textarea {font:inherit;box-sizing:border-box} button,input {border:1px solid #ddd;border-radius:5px;background:white} button {cursor:pointer} .mod-cta {background:#9270ff;color:white} [hidden]{display:none!important}` });
@@ -120,7 +131,7 @@ const tagPerformanceOnly = process.argv.includes('--tag-performance');
     });
     const installed = fs.readFileSync('main.js', 'utf8');
     await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
-    const result = await page.evaluate(async (tagPerformanceOnly) => {
+    const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,sampleMarkdown}) => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
       const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -161,6 +172,86 @@ const tagPerformanceOnly = process.argv.includes('--tag-performance');
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
         return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
       };
+      if (tagRenderOnly) {
+        const bodies = sampleMarkdown || Array.from({length:120}, (_,i) => '# Note ' + i + '\n\n' + ('## Heading\n\nA paragraph with **bold**, [link](https://example.invalid) and `code`.\n\n- One\n- Two\n- [ ] Task\n\n').repeat(15));
+        const sampleFiles = bodies.map((body,i)=>({path:`Grail/Sample${i}.md`,name:`Sample${i}.md`,basename:`Sample${i}`,stat:{ctime:bodies.length-i,mtime:bodies.length-i}}));
+        sampleFiles.forEach((file,i)=>{metadata.set(file,{tags:[i===0?'hide-one':'keep'],color:'default'});text.set(file,bodies[i].replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/,''));});
+        app.vault.getMarkdownFiles=()=>sampleFiles;
+        app.metadataCache.getFirstLinkpathDest=()=>null;
+        const board=makeView();
+        Object.assign(board.contentEl.style,{width:'720px',height:'600px'});
+        board.gridEl.className='jotdrop-grid';
+        board.filterBarEl=board.contentEl.createDiv({cls:'jotdrop-filter-bar'});
+        board.contentEl.prepend(board.filterBarEl);
+        const paint=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await board.render(); await paint();
+        const initialNodes=new Map([...board.gridEl.querySelectorAll('.jotdrop-card')].map(el=>[el.dataset.path,el]));
+        const relativeTop=el=>el.getBoundingClientRect().top-board.gridEl.getBoundingClientRect().top;
+        const placements=new Map([...initialNodes].map(([path,el])=>[path,{column:el.parentElement,top:relativeTop(el)}]));
+        const removed=initialNodes.get(sampleFiles[0].path);
+        const removedColumn=removed.parentElement;
+        const removedTop=relativeTop(removed);
+        const removedSpace=removed.getBoundingClientRect().height+parseFloat(getComputedStyle(removedColumn).rowGap);
+        const before=rendered.length;
+        const render=board.render.bind(board);
+        let pending;
+        board.render=(...args)=>pending=render(...args);
+        const started=performance.now();
+        board.filterBarEl.querySelector('[data-tag="hide-one"]').click();
+        await pending; await paint();
+        const elapsed=performance.now()-started;
+        const visible=[...board.gridEl.querySelectorAll('.jotdrop-card')];
+        const retained=visible.filter(el=>initialNodes.get(el.dataset.path)===el).length;
+        const common=visible.filter(el=>initialNodes.has(el.dataset.path)).length;
+        const rerenders=rendered.length-before;
+        const stats={notes:bodies.length,elapsedMs:Math.round(elapsed),markdownRenders:rerenders,retained,common};
+        assert(retained===common && rerenders<=visible.length-common && elapsed<200, 'single tag must retain unchanged cards and paint within 200 ms: '+JSON.stringify(stats));
+        for (const el of visible) {
+          const previous=placements.get(el.dataset.path);
+          if (!previous) continue;
+          assert(el.parentElement===previous.column, 'filter keeps each existing card in its column');
+          const expected=previous.top-(previous.column===removedColumn && previous.top>removedTop ? removedSpace : 0);
+          assert(Math.abs(relativeTop(el)-expected)<1, 'only cards below the hidden card shift upward');
+        }
+        const afterHide=rendered.length;
+        board.filterBarEl.querySelector('[data-tag="hide-one"]').click();
+        await pending; await paint();
+        assert(rendered.length===afterHide, 'restoring a tag reuses its previously rendered Markdown');
+        assert(board.lastFiltered.length===bodies.length, 'restoring tag restores all notes');
+        for (const [path,el] of initialNodes) {
+          assert(board.gridEl.contains(el) && el.parentElement===placements.get(path).column, 'restored cards retain their original DOM and column');
+          assert(Math.abs(relativeTop(el)-placements.get(path).top)<1, 'restoring a tag restores original vertical positions');
+        }
+        const untouched=[...board.gridEl.querySelectorAll('.jotdrop-card')];
+        board.toggleTagFilter('absent-tag'); await pending; await paint();
+        assert(rendered.length===afterHide && untouched.every(el=>board.gridEl.contains(el)), 'excluding a tag absent from visible notes does not rebuild cards');
+
+        board.filterBarEl.querySelector('[data-action="hide-all"]').click(); await pending; await paint();
+        assert(board.gridEl.querySelectorAll('.jotdrop-card').length===0, 'hide all detaches every card');
+        board.filterBarEl.querySelector('[data-action="show-all"]').click(); await pending; await paint();
+        assert(rendered.length===afterHide && untouched.every(el=>board.gridEl.contains(el)), 'show all reuses detached cards');
+        const initialComponentCount=board.markdownComponents.length;
+        board.renderLimit=bodies.length;
+        await board.render(true); await paint();
+        const loaded=[...board.gridEl.querySelectorAll('.jotdrop-card')];
+        assert(loaded.length===bodies.length, 'expanded render window loads the remaining notes');
+        board.contentEl.scrollTop=board.contentEl.scrollHeight/2;
+        await paint();
+        const scrolled=board.contentEl.scrollTop;
+        const loadedRenders=rendered.length;
+        const loadedColumns=new Map(loaded.map(el=>[el,el.parentElement]));
+        board.toggleTagFilter('another-absent-tag'); await pending; await paint();
+        assert(board.renderLimit===bodies.length && loaded.every(el=>board.gridEl.contains(el)), 'tag changes preserve the already loaded window');
+        assert(rendered.length===loadedRenders && Math.abs(board.contentEl.scrollTop-scrolled)<1, 'unmatched tag leaves rendering and scroll position unchanged');
+        board.toggleTagFilter('hide-one'); await pending; await paint();
+        assert(loaded.filter(el=>el!==removed).every(el=>el.parentElement===loadedColumns.get(el)), 'scrolled filtering also keeps column placement');
+        const components=board.markdownComponents.map(entry=>entry.component);
+        assert(components.length>=initialComponentCount && components.every(component=>board.children.has(component)), 'hidden Markdown components remain alive for reuse');
+        await board.onClose(); board.contentEl.remove();
+        assert(components.every(component=>!board.children.has(component)), 'closing the view unloads retained Markdown components');
+        return {checks,stats};
+      }
+
       if (tagPerformanceOnly) {
         const perfFiles = Array.from({length:160}, (_,i) => ({path:`Grail/Perf${i}.md`,name:`Perf${i}.md`,basename:`Perf${i}`,stat:{ctime:i,mtime:i}}));
         perfFiles.forEach((file,i) => { metadata.set(file,{tags:[i % 2 ? 'keep' : 'hide']}); text.set(file,'Short note\n\n- [ ] task'); });
@@ -671,7 +762,11 @@ const tagPerformanceOnly = process.argv.includes('--tag-performance');
       app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
       return { checks, notices, writes:writes.length };
-    }, tagPerformanceOnly);
+    }, {tagPerformanceOnly,tagRenderOnly,sampleMarkdown});
+    if (tagRenderOnly) {
+      console.log(`PASS: ${result.checks} card retention checks: ${JSON.stringify(result.stats)}; source=${sampleMarkdown ? "local vault sample (read only, no network)" : "synthetic Markdown"}.`);
+      return;
+    }
     if (tagPerformanceOnly) {
       console.log(`PASS: ${result.checks} tag responsiveness checks; toggle times: ${result.samples.join(", ")} ms (160 notes, delayed file reads).`);
       return;
