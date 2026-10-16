@@ -3,7 +3,8 @@
 ## Current goals
 - По просьбе пользователя кандидат d42e0d0 установлен для проверки; исследование сохранено в codex/drag-filter-wip-20261016.
 - Перенос после работы над фильтрами остаётся нерешённым: [DRAG_FILTER_PROBLEM.md](DRAG_FILTER_PROBLEM.md).
-- Latest session report: [2026-10-16-1633](work-reports/2026-10-16-1633.md).
+- Ветка codex/drag-filter-wip-20261016 опубликована в origin для продолжения на другом устройстве; tracking настроен. Начать с docs/drag-filter-regression-research.md.
+- Latest session report: [2026-10-16-1639](work-reports/2026-10-16-1639.md).
 
 ## Completed tasks still relevant to the current phase
 - Есть меню ручного порядка/создания/изменения и фильтры тегов с сохранением DOM; совпадающие чтения объединяются.
@@ -32,6 +33,7 @@
 - PASSED в текущей сессии: verify:deploy/gated build, 3/3 hashes до/после установки, неизменность data.json при установке; node --check, git diff --check.
 - Native control/deferred: trusted start/drop/end, колонка 1, состояние очищено. Active refresh: sourceConnected=false, только trusted start, зависание до таймлимита 12 с. Sort/load: 120 уникальных карточек, 0 нарушений порядка.
 - Полный check:fork повторно NOT RUN: runtime не изменялся после успешного набора предыдущей сессии. Подтверждение пользователя в Obsidian ожидается; Android NOT RUN.
+- PASSED при передаче: git push -u origin codex/drag-filter-wip-20261016; удалённый HEAD исходников 355472e16ceac6127c628a6893bc42d18c705739 совпал с локальным. В этой сессии меняются только документы; тесты повторно NOT RUN.
 
 ## Known issues
 - Пользователь подтверждает зависание переноса после работы над фильтрами; полная причина ещё не установлена.
