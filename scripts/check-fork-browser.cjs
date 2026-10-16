@@ -762,12 +762,20 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       pinnedEmpty.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:crossTransfer}));await emptyView.orderQueue;
       crossSource.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:crossTransfer}));
       assert(writes.length===beforeColumnNoOp,'drop into the current column with a single card writes nothing');
-      window.createEmptyColumnMouseFixture=async()=>{
+      window.createEmptyColumnMouseFixture=async(useTags=false)=>{
         document.body.replaceChildren();
-        emptyFiles.forEach((file,index)=>Object.assign(metadata.get(file),{pinned:index===2,jotdrop_order:index*1024}));
+        emptyFiles.forEach((file,index)=>Object.assign(metadata.get(file),{pinned:index===2,jotdrop_order:index*1024,tags:[index===0?'drag-visible':'drag-hidden']}));
         const mousePlugin={...emptyPlugin,settings:{...emptyPlugin.settings,cardLayout:{columnCount:3,columns:Object.fromEntries(emptyFiles.map(file=>[file.path,0]))}}};
-        const mouseView=makeView(mousePlugin);Object.assign(mouseView.contentEl.style,{width:'880px',height:'600px'});mouseView.query='empty card 0';
+        const mouseView=makeView(mousePlugin);Object.assign(mouseView.contentEl.style,{width:'880px',height:'600px'});mouseView.query=useTags?'':'empty card 0';
+        mouseView.filterBarEl=mouseView.contentEl.createDiv({cls:'jotdrop-filter-bar'});
+        mouseView.contentEl.prepend(mouseView.filterBarEl);
         await mouseView.render();await settleLayout();
+        if(useTags){
+          const render=mouseView.render.bind(mouseView);let filtering;
+          mouseView.render=(...args)=>filtering=render(...args);
+          mouseView.filterBarEl.querySelector('[data-tag="drag-hidden"]').click();
+          await filtering;await settleLayout();
+        }
         return window.emptyColumnMouseFixture={view:mouseView,plugin:mousePlugin,sourcePath:emptyFiles[0].path,events:[]};
       };
       await emptyView.onClose();emptyView.contentEl.remove();
@@ -915,10 +923,10 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     fs.mkdirSync('work/verification', { recursive: true });
     await page.screenshot({ path: 'work/verification/modal-preview.png', fullPage: true });
     await page.setViewportSize({width:900,height:780});
-    const createMouseFixture = async () => page.evaluate(async()=>{
-      const fixture=await window.createEmptyColumnMouseFixture();
+    const createMouseFixture = async (useTags=false) => page.evaluate(async(useTags)=>{
+      const fixture=await window.createEmptyColumnMouseFixture(useTags);
       for(const type of ['dragstart','drop']) fixture.view.gridEl.addEventListener(type,event=>fixture.events.push({type:event.type,trusted:event.isTrusted}),true);
-    });
+    },useTags);
     await createMouseFixture();
     await page.locator('.jotdrop-card').dragTo(page.locator('.jotdrop-grid-col').nth(2),{targetPosition:{x:40,y:40}});
     await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2);
@@ -926,23 +934,23 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     assert.equal(await page.locator('.jotdrop-grid-col').nth(2).locator('.jotdrop-card').count(),1,'real mouse drag moves the card into the empty column');
     await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
     for (const area of ['gap', 'background']) {
-      await createMouseFixture();
+      await createMouseFixture(true);
       const point = await page.evaluate(area => {
         const grid=window.emptyColumnMouseFixture.view.gridEl;
         grid.dataset.mouseDropGrid='true';
         if (area==='background') grid.style.paddingBottom='40px';
-        const inner=grid.querySelector('.jotdrop-grid-inner'),right=inner.children[2].getBoundingClientRect();
+        const inner=grid.querySelector('.jotdrop-grid-inner[data-pinned="false"]'),right=inner.children[2].getBoundingClientRect();
         const surface=area==='gap'?inner:grid,rect=surface.getBoundingClientRect();
         const x=area==='gap'?right.left-rect.left-2:right.left-rect.left+15;
         const y=area==='gap'?40:rect.height-8;
-        return {x,y,hitSurface:document.elementFromPoint(rect.left+x,rect.top+y)===surface,selector:area==='gap'?'.jotdrop-grid-inner':'[data-mouse-drop-grid]'};
+        return {x,y,hitSurface:document.elementFromPoint(rect.left+x,rect.top+y)===surface,selector:area==='gap'?'.jotdrop-grid-inner[data-pinned="false"]':'[data-mouse-drop-grid]'};
       },area);
       assert(point.hitSurface,`native mouse targets the ${area} outside column elements`);
       await page.locator('.jotdrop-card').dragTo(page.locator(point.selector),{targetPosition:{x:point.x,y:point.y}});
       await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2,{},{timeout:10000});
       await page.evaluate(()=>window.emptyColumnMouseFixture.view.orderQueue);
       assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'dragstart',trusted:true},{type:'drop',trusted:true}],`native ${area} drop reaches the plugin`);
-      assert.equal(await page.locator('.jotdrop-grid-col').nth(2).locator('.jotdrop-card').count(),1,`${area} drop places one card in the nearest column`);
+      assert.equal(await page.locator('.jotdrop-grid-col:visible').nth(2).locator('.jotdrop-card').count(),1,`${area} drop places one card in the nearest visible column after excluding tags`);
       assert.equal(await page.evaluate(()=>window.emptyColumnMouseFixture.view.draggedPath),null,`${area} drop finishes dragging`);
       await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
     }
