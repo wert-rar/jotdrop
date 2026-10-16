@@ -302,7 +302,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     if (this.plugin.settings.sortMode === 'manual') {
       cards.sort((a, b) => a.order - b.order);
     }
-    this.orderCards = cards;
     return cards;
   };
   View.prototype.moveCard = function (sourcePath, targetPath, after, columnTarget) {
@@ -338,11 +337,15 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   };
   View.prototype.performCardMove = async function (sourcePath, targetPath, after, columnTarget) {
     if (sourcePath === targetPath) return;
+    // A refresh already awaiting file reads must not replace the dragged DOM.
+    if (this.cardRead) this.renderPending = true;
+    this.renderRequest++;
     this.reordering = true;
     const previousLayout=this.plugin.settings.cardLayout;
     const previousSort=this.plugin.settings.sortMode;
     try {
       const cards = this.orderCards || await this.collectCards();
+      this.orderCards = cards;
       const source = cards.find(card => card.file.path === sourcePath);
       const target = cards.find(card => card.file.path === targetPath);
       const placement=this.captureCardPlacement(sourcePath,targetPath,after,columnTarget);
@@ -515,6 +518,8 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   };
   const renderCards = View.prototype.renderCards;
   View.prototype.renderCards = function (cards, reuseLayout = false) {
+    // Only an accepted render owns the displayed order; cancelled reads are pure.
+    this.orderCards = cards;
     // Visibility changes retain Markdown components and existing column stacks.
     this.stopMasonryObservation();
     if (reuseLayout) return renderCards.call(this, cards, true);

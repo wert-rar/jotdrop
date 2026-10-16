@@ -7,6 +7,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const tagPerformanceOnly = process.argv.includes('--tag-performance');
 const tagRenderOnly = process.argv.includes('--tag-render-performance');
+const dragRefreshOnly = process.argv.includes('--drag-refresh');
 const sampleRoot = process.argv.find(arg => arg.startsWith('--vault-sample='))?.slice('--vault-sample='.length);
 const readSamples = dir => fs.readdirSync(dir, {withFileTypes:true}).flatMap(entry => {
   if (entry.name.startsWith('.') || entry.name === 'Archive') return [];
@@ -143,7 +144,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     });
     const installed = fs.readFileSync('main.js', 'utf8');
     await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
-    const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,sampleMarkdown}) => {
+    const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,sampleMarkdown}) => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
       const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -184,6 +185,49 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
         return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
       };
+      if (dragRefreshOnly) {
+        const raceFiles=Array.from({length:6},(_,i)=>({path:`DragRace/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
+        raceFiles.forEach((file,i)=>{metadata.set(file,{pinned:false,tags:['keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
+        app.vault.getMarkdownFiles=()=>raceFiles;
+        Object.assign(plugin.settings,{notesFolder:'DragRace',archiveFolder:'DragRace/Archive',sortMode:'manual',cardWidth:240});
+        const board=makeView();board.contentEl.style.width='900px';
+        await board.render();await tick();
+        const sourcePath=raceFiles[0].path,targetPath=raceFiles[1].path;
+        const source=board.gridEl.querySelector(`[data-path="${sourcePath}"]`);
+        const target=board.gridEl.querySelector(`[data-path="${targetPath}"]`);
+        assert(source.parentElement!==target.parentElement,'race fixture crosses columns');
+        const read=app.vault.cachedRead,write=app.fileManager.processFrontMatter;
+        let releaseRead,releaseWrite,readEntered,writeEntered,paused=false;
+        const readGate=new Promise(resolve=>{releaseRead=resolve;});
+        const writeGate=new Promise(resolve=>{releaseWrite=resolve;});
+        const readStarted=new Promise(resolve=>{readEntered=resolve;});
+        const writeStarted=new Promise(resolve=>{writeEntered=resolve;});
+        app.vault.cachedRead=async file=>{const value=await read(file);if(!paused){paused=true;readEntered();await readGate;}return value;};
+        app.fileManager.processFrontMatter=async(file,callback)=>{writeEntered();await writeGate;return write(file,callback);};
+        const incoming={path:'DragRace/incoming.md',name:'incoming.md',basename:'incoming',stat:{ctime:0,mtime:0}};
+        raceFiles.push(incoming);metadata.set(incoming,{pinned:false,tags:['keep'],jotdrop_order:6144});text.set(incoming,'# Incoming note');
+        const refreshing=board.render();await readStarted;
+        const moving=board.moveCard(sourcePath,targetPath,true);await writeStarted;
+        const movingCards=board.orderCards,markdownAtMove=rendered.length;
+        releaseRead();await refreshing;
+        const during={sameNode:board.gridEl.querySelector(`[data-path="${sourcePath}"]`)===source,correctColumn:source.previousElementSibling===target,markdownRenders:rendered.length-markdownAtMove,sameOrder:board.orderCards===movingCards};
+        releaseWrite();await moving;
+        app.vault.cachedRead=read;app.fileManager.processFrontMatter=write;
+        assert(during.sameNode&&during.correctColumn,'pending refresh must not replace or displace a card during a cross-column drop: '+JSON.stringify(during));
+        assert(during.markdownRenders===0,'pending refresh must not rebuild Markdown during drop');
+        assert(during.sameOrder,'a cancelled refresh must not overwrite the active drag order');
+        assert(!board.reordering,'cross-column move releases its write lock');
+        assert(board.lastFiltered.some(card=>card.file===incoming),'a refresh interrupted by dragging must apply incoming notes after the save finishes');
+        await board.moveCard(raceFiles[2].path,sourcePath,true);
+        const expected=board.lastFiltered.map(card=>card.file.path).join('|');
+        await board.render();
+        assert(board.lastFiltered.map(card=>card.file.path).join('|')===expected,'consecutive move after a stale refresh preserves both saved ranks');
+        const nodes=[...board.gridEl.querySelectorAll('.jotdrop-card')];
+        assert(nodes.length===7&&new Set(nodes.map(node=>node.dataset.path)).size===7,'all cards remain present once after refresh and consecutive moves');
+        assert(board.gridEl.querySelector(`[data-path="${sourcePath}"]`).parentElement===board.gridEl.querySelectorAll('.jotdrop-grid-col')[1],'target column survives the next authoritative refresh');
+        await board.onClose();board.contentEl.remove();
+        return {checks};
+      }
       if (tagRenderOnly) {
         const bodies = sampleMarkdown || Array.from({length:120}, (_,i) => '# Note ' + i + '\n\n' + ('## Heading\n\nA paragraph with **bold**, [link](https://example.invalid) and `code`.\n\n- One\n- Two\n- [ ] Task\n\n').repeat(15));
         const sampleFiles = bodies.map((body,i)=>({path:`Grail/Sample${i}.md`,name:`Sample${i}.md`,basename:`Sample${i}`,stat:{ctime:bodies.length-i,mtime:bodies.length-i}}));
@@ -855,7 +899,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
       return { checks, notices, writes:writes.length };
-    }, {tagPerformanceOnly,tagRenderOnly,sampleMarkdown});
+    }, {tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,sampleMarkdown});
+    if (dragRefreshOnly) {
+      console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks.`);
+      return;
+    }
     if (tagRenderOnly) {
       console.log(`PASS: ${result.checks} card retention checks: ${JSON.stringify(result.stats)}; source=${sampleMarkdown ? "local vault sample (read only, no network)" : "synthetic Markdown"}.`);
       return;
