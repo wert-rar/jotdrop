@@ -495,50 +495,71 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     this.masonrySizes.set(card,[card.offsetWidth,card.offsetHeight]);
     this.masonryObserver.observe(card);
   };
-  View.prototype.registerColumnDrops = function (inner) {
+  View.prototype.dropColumnAt = function (event) {
+    const direct = event.target.closest?.('.jotdrop-grid-col');
+    if (direct) return direct;
+    // Flex gaps and the free grid background belong to the nearest visible column.
+    let nearest = null, distance = Infinity;
+    for (const column of this.gridEl.querySelectorAll('.jotdrop-grid-col')) {
+      const rect = column.getClientRects()[0];
+      if (!rect) continue;
+      const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
+      const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
+      const squared = dx * dx + dy * dy;
+      if (squared < distance) { nearest = column; distance = squared; }
+    }
+    return nearest;
+  };
+  // The carried card's top edge, not the pointer, picks the slot: a tall card
+  // grabbed low still lands where its drag image visibly sits.
+  View.prototype.dropSlotAt = function (event) {
+    const column = this.dropColumnAt(event);
+    if (!column) return null;
+    const top = event.clientY - (this.dragGrabOffset || 0);
+    const cards = [...column.children].filter(node => node.classList.contains('jotdrop-card') && node.dataset.path !== this.draggedPath);
+    const next = cards.find(node => { const rect = node.getBoundingClientRect(); return top < rect.top + rect.height / 2; });
+    if (next) return { column, target: next, after: false };
+    return cards.length ? { column, target: cards.at(-1), after: true } : { column, target: null, after: false };
+  };
+  View.prototype.markDropSlot = function (slot) {
+    const element = slot?.target || slot?.column || null;
+    const cls = !slot ? null : !slot.target ? 'jotdrop-column-drop' : slot.after ? 'jotdrop-drop-after' : 'jotdrop-drop-before';
+    const marker = this.dropMarker;
+    if (marker?.element === element && marker?.cls === cls) return;
+    marker?.element.classList.remove(marker.cls);
+    element?.classList.add(cls);
+    this.dropMarker = element ? { element, cls } : null;
+  };
+  View.prototype.registerColumnDrops = function () {
     const grid = this.gridEl;
     if (grid.jotdropDropRegistered) return;
     grid.jotdropDropRegistered = true;
-    const clear = () => grid.querySelectorAll('.jotdrop-column-drop').forEach(column => column.classList.remove('jotdrop-column-drop'));
-    const columnAt = event => {
-      const direct = event.target.closest('.jotdrop-grid-col');
-      if (direct) return direct;
-      // Flex gaps and the free grid background belong to the nearest visible column.
-      let nearest = null, distance = Infinity;
-      for (const column of grid.querySelectorAll('.jotdrop-grid-col')) {
-        const rect = column.getClientRects()[0];
-        if (!rect) continue;
-        const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
-        const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
-        const squared = dx * dx + dy * dy;
-        if (squared < distance) { nearest = column; distance = squared; }
-      }
-      return nearest;
-    };
     grid.addEventListener('dragover', event => {
-      if (!this.draggedPath || this.selectionMode || event.target.closest('.jotdrop-card')) return;
-      const column = columnAt(event);
-      if (!column) return;
+      if (!this.draggedPath || this.selectionMode) return;
+      const slot = this.dropSlotAt(event);
+      if (!slot) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
-      clear();
-      column.classList.add('jotdrop-column-drop');
+      this.dropSlot = slot;
+      this.markDropSlot(slot);
     });
     grid.addEventListener('dragleave', event => {
-      if (!event.relatedTarget || !grid.contains(event.relatedTarget)) clear();
+      if (event.relatedTarget && grid.contains(event.relatedTarget)) return;
+      this.dropSlot = null;
+      this.markDropSlot(null);
     });
     grid.addEventListener('drop', run(async event => {
-      clear();
-      if (this.selectionMode || event.target.closest('.jotdrop-card')) return;
+      // Drop exactly where the marker was shown during the last dragover.
+      const slot = this.dropSlot?.column.isConnected ? this.dropSlot : this.dropSlotAt(event);
+      this.dropSlot = null;
+      this.markDropSlot(null);
+      if (this.selectionMode || !slot) return;
       const source = event.dataTransfer.getData('application/x-jotdrop-note');
       if (!source || source !== this.draggedPath) return;
-      const column = columnAt(event);
-      if (!column) return;
       event.stopPropagation();
-      const columns = column.parentElement;
-      const target = [...column.children].filter(card=>card.dataset.path!==source).at(-1);
-      if (target) await this.moveCard(source, target.dataset.path, true);
-      else await this.moveCard(source, null, false, {pinned:columns.dataset.pinned==='true',index:[...columns.children].indexOf(column),count:columns.children.length});
+      const columns = slot.column.parentElement;
+      if (slot.target) await this.moveCard(source, slot.target.dataset.path, slot.after);
+      else await this.moveCard(source, null, false, {pinned:columns.dataset.pinned==='true',index:[...columns.children].indexOf(slot.column),count:columns.children.length});
     }));
   };
   const render = View.prototype.render;
@@ -602,6 +623,10 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.addEventListener('dragstart', event => {
       if (this.selectionMode || event.target.closest('a, input, button')) { event.preventDefault(); return; }
       this.draggedPath = data.file.path;
+      // The drag image keeps the grab point; slots follow the card's top edge.
+      const rect = card.getBoundingClientRect();
+      this.dragGrabOffset = Math.min(Math.max(event.clientY - rect.top, 0), rect.height);
+      this.dropSlot = null;
       // A refresh already awaiting file reads is replayed after the drag ends.
       if (this.cardRead) this.renderPending = true;
       this.renderRequest++;
@@ -609,30 +634,11 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       event.dataTransfer.effectAllowed = 'move';
       card.classList.add('is-dragging');
     });
-    const clearDrop = () => {
-      card.classList.remove('jotdrop-drop-before', 'jotdrop-drop-after');
-    };
-    card.addEventListener('dragover', event => {
-      if (!this.draggedPath || this.draggedPath === data.file.path) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      const rect = card.getBoundingClientRect();
-      const after = event.clientY > rect.top + rect.height / 2;
-      card.classList.toggle('jotdrop-drop-before', !after);
-      card.classList.toggle('jotdrop-drop-after', after);
-    });
-    card.addEventListener('dragleave', clearDrop);
-    card.addEventListener('drop', run(async event => {
-      event.stopPropagation();
-      const source = event.dataTransfer.getData('application/x-jotdrop-note');
-      const after = card.classList.contains('jotdrop-drop-after');
-      clearDrop();
-      if (source && source === this.draggedPath) await this.moveCard(source, data.file.path, after);
-    }));
     card.addEventListener('dragend', () => {
       this.draggedPath = null;
+      this.dropSlot = null;
       card.classList.remove('is-dragging');
-      this.gridEl.querySelectorAll('.jotdrop-drop-before, .jotdrop-drop-after, .jotdrop-column-drop').forEach(el => el.classList.remove('jotdrop-drop-before', 'jotdrop-drop-after', 'jotdrop-column-drop'));
+      this.markDropSlot(null);
       if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
       // A drop hands the deferred refresh to performCardMove; a cancelled drag runs it here.
       if (this.renderPending && !this.reordering) { this.renderPending=false; void this.render().catch(reportError); }

@@ -449,6 +449,11 @@
   gap: 8px;
 }
 
+/* Separate the pinned stack from the other notes. */
+.jotdrop-section + .jotdrop-section {
+  margin-top: 20px;
+}
+
 .jotdrop-section-label {
   font-size: 0.75em;
   text-transform: uppercase;
@@ -1443,3 +1448,14 @@
 .jotdrop-card-preview.markdown-rendered pre { white-space: pre-wrap; }
 .jotdrop-card-preview.markdown-rendered table { font-size: 0.85em; }
 .jotdrop-card.is-dragging { opacity: 0.4; }
+/* Drop slot: the card the carried note will land next to is tinted from the
+   side it will occupy, with an accent edge on that side. */
+.jotdrop-card.jotdrop-drop-before {
+  box-shadow: 0 -3px 0 var(--interactive-accent);
+  background-image: linear-gradient(to bottom, color-mix(in srgb, var(--interactive-accent) 30%, transparent), transparent 60%);
+}
+.jotdrop-card.jotdrop-drop-after {
+  box-shadow: 0 3px 0 var(--interactive-accent);
+  background-image: linear-gradient(to top, color-mix(in srgb, var(--interactive-accent) 30%, transparent), transparent 60%);
+}
+.jotdrop-grid-col.jotdrop-column-drop { outline: 2px dashed var(--interactive-accent); outline-offset: 2px; border-radius: 8px; }

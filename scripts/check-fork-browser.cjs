@@ -235,6 +235,33 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         return {checks};
       }
       if (dragRefreshOnly) {
+        // Slots follow the carried card's top edge: a tall card grabbed near its
+        // bottom leaves the pointer in the column's free space below the stack.
+        const slotFiles=Array.from({length:6},(_,i)=>({path:`DragSlot/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
+        slotFiles.forEach((file,i)=>{metadata.set(file,{pinned:false,tags:['keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
+        app.vault.getMarkdownFiles=()=>slotFiles;
+        Object.assign(plugin.settings,{notesFolder:'DragSlot',archiveFolder:'DragSlot/Archive',sortMode:'manual',cardWidth:240,cardLayout:undefined});
+        const slotBoard=makeView();Object.assign(slotBoard.contentEl.style,{width:'900px',height:'900px'});
+        await slotBoard.render();await tick();
+        const slotNode=index=>slotBoard.gridEl.querySelector(`[data-path="DragSlot/${index}.md"]`);
+        slotFiles.forEach((_,i)=>Object.assign(slotNode(i).style,{height:(i===0?400:80)+'px',boxSizing:'border-box',overflow:'hidden'}));
+        slotBoard.reflowCards();
+        const slotColumns=[...slotBoard.gridEl.querySelectorAll('.jotdrop-grid-col')];
+        const stack=column=>[...column.children].map(node=>node.jotdropData.file.basename).join(',');
+        assert(slotColumns.map(stack).join('|')==='0|1,3,5|2,4','slot fixture packs a tall card alone in the first column');
+        const tall=slotNode(0),low=slotNode(3),lowRect=low.getBoundingClientRect(),tallRect=tall.getBoundingClientRect();
+        const grab=380,slotTransfer=new DataTransfer();
+        tall.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:slotTransfer,clientY:tallRect.top+grab}));
+        const columnRect=slotColumns[1].getBoundingClientRect(),pointerY=lowRect.top+10+grab;
+        assert(pointerY>slotNode(5).getBoundingClientRect().bottom,'pointer sits below the target stack while the card top is above the target middle');
+        slotColumns[1].dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:slotTransfer,clientX:columnRect.left+20,clientY:pointerY}));
+        assert(low.classList.contains('jotdrop-drop-before')&&!slotColumns[1].classList.contains('jotdrop-column-drop'),'marker shows the card top edge slot, not the column end');
+        slotColumns[1].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:slotTransfer}));
+        await slotBoard.orderQueue;
+        tall.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:slotTransfer}));
+        assert(stack(slotColumns[1])==='1,0,3,5','a tall card lands where its top edge was shown, not at the bottom of the column: '+slotColumns.map(stack).join('|'));
+        assert(!slotBoard.gridEl.querySelector('.jotdrop-drop-before, .jotdrop-drop-after, .jotdrop-column-drop'),'drop markers are cleared after the drag');
+        await slotBoard.onClose();slotBoard.contentEl.remove();
         const raceFiles=Array.from({length:6},(_,i)=>({path:`DragRace/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
         raceFiles.forEach((file,i)=>{metadata.set(file,{pinned:false,tags:['keep'],jotdrop_order:i*1024});text.set(file,`# Card ${i}`);});
         app.vault.getMarkdownFiles=()=>raceFiles;
