@@ -2,7 +2,7 @@
 
 ## Current goals
 - Оптимизированная сборка 31178a7 установлена локально. Перезагрузить JotDrop в Obsidian и проверить работу и настройки.
-- 2026-10-17 17:05: жалоба на залипание drag в 31178a7 не воспроизведена сравнительным стендом (b1acced vs HEAD с событиями main.ts); пользователь подтвердил, что сейчас перенос работает. По просьбе пользователя анимация сдвига карточек после drop сокращена со 160 до 80 мс (src/customizations.js, reflowCards); остальные задержки не менялись. Изменение не закоммичено и не установлено.
+- 2026-10-17 17:05: жалоба на залипание drag в 31178a7 не воспроизведена сравнительным стендом (b1acced vs HEAD с событиями main.ts); пользователь подтвердил, что сейчас перенос работает. По просьбе пользователя анимация сдвига карточек после drop сокращена со 160 до 80 мс (src/customizations.js, reflowCards); остальные задержки не менялись. Закоммичено (2087dd4) и установлено через deploy:local в 17:24; нужно перезагрузить JotDrop в Obsidian.
 - Latest session report: [2026-10-17-1705](work-reports/2026-10-17-1705.md).
 
 ## Completed tasks still relevant to the current phase
@@ -29,6 +29,7 @@
 - work-reports/2026-10-17-1554.md: локальная установка и проверка файлов.
 
 ## Testing and verification results
+- PASS при установке 2087dd4: deploy:local (verify:deploy и gated build); SHA256 main.js/manifest.json/styles.css совпадают со сборкой; data.json не изменился. Бэкап: work/backups/jotdrop-before-anim80-2026-10-17-1724. Лог: work/logs/install-anim80-2026-10-17-1724.log.
 - PASS (17:1x, анимация 80 мс): npm run build с source gate, полный npm run check:fork. Логи: work/logs/anim80-build.log, anim80-check.log. Живой Obsidian NOT RUN.
 - PASS: финальная npm run build с source gate; полный npm run check:fork (69 новых, 177 общих browser checks, Markdown, 22 tag, 250 retention, 9 drag-refresh, 7 drag-window и native drag).
 - PASS: 21 performance assertions. На 1000 заметках поиск: 0 cachedRead / 0 Markdown-рендеров; изменение одной видимой заметки: 1 / 1, сохранены 59 из 60 DOM; дозагрузка: 0 чтений.
