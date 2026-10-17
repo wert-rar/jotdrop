@@ -19,11 +19,8 @@ import * as obsidian from "obsidian";
 import { EditNoteModal } from "./edit";
 import { stripFrontmatter } from "./metadata";
 import { installJotDropCustomizations } from "./customizations.js";
-// [DEBUG-dragtrace] Temporary diagnostics; remove with src/dragTrace.js.
-import { installDragTrace } from "./dragTrace.js";
 
 installJotDropCustomizations({ EditModal: EditNoteModal, CaptureModal: QuickCaptureModal, View: JotDropView, obsidian, t, stripFrontmatter });
-installDragTrace({ View: JotDropView, normalizePath });
 // Stable exports let regressions exercise the production bundle without minified names.
 export { EditNoteModal, QuickCaptureModal, JotDropView };
 export { extractPreview } from "./view";
