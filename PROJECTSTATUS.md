@@ -1,6 +1,7 @@
 # PROJECTSTATUS
 
 ## Current goals
+- 2026-10-17 23:55: ИЗМЕРЕНО в живом Obsidian 1.14.4 (Chrome 150) на f499f43 после перезапуска: ~60 нативных переносов, drop через 0–41 мс после физического отпускания, performCardMove 43–200 мс, зависаний нет; пользователь подтвердил «сейчас быстро». Жалоба на лаги в 23:10 относилась к старому коду в памяти: Obsidian не перезапускали после установки, работал b1acced. Почему тормозил именно b1acced — не измерено.
 - 2026-10-17 23:10: по просьбе пользователя перенос возвращён на системный (Windows/HTML5) drag-and-drop — f499f43 откатывает 1bc2b3b, остальные улучшения ветки сохранены. Установлено во второй машине. Ранее пользователь подтвердил, что pointer-перенос 1bc2b3b не зависал; на нативном переносе возможен возврат зависаний (модальный цикл ОС). Ветка не запушена в main.
 - Включены 98dd3dc (слот по верхнему краю, индикатор стороны, отступ закреплённых +20 px) и 2087dd4 (анимация 80 мс). Временная трассировка 3baf80b откатана (e59498c); копия трассы: work/logs/drag-trace-3baf80b-2026-10-17.json.
 - Latest session report: [2026-10-17-1705](work-reports/2026-10-17-1705.md).
@@ -30,6 +31,8 @@
 - work-reports/2026-10-17-1554.md: локальная установка и проверка файлов.
 
 ## Testing and verification results
+- PASS живой Obsidian f499f43: work/obsidian-drag-record.cjs (CDP 127.0.0.1:9222 + опрос физической кнопки мыши), логи work/logs/obsidian-record-2026-10-17T20-56-30-001Z.json, trace-window-472.txt. Четыре нажатия без dragstart в 472–475 с — обычные click (render 228/74 мс), не перенос. Один перенос отменён: отпущен над view-content вне сетки, drop не принят.
+- PASS Edge с настоящим системным циклом (SendInput, work/os-drag-bench.cjs): маленькие/высокие карточки и маленький drag image — drop через 5–8 мс.
 - PASS f499f43: verify:deploy + verify:base, tsc, esbuild production; --drag-refresh (14 + 3 native), --drag-window (7). Логи: work/logs/native-drag-build.log, native-drag-refresh.log, native-drag-window.log. Полный check:fork и живой Obsidian NOT RUN.
 - PASS 1bc2b3b: npm run build, полный check:fork (179 browser, 19 drag-refresh, 7 drag-window, реальные мышиные переносы Playwright), git diff --check. Стенд на реальных текстах Grail: 8 переносов, попадание в колонку, long tasks нет. Логи: work/logs/pointer-build.log, pointer-check.log. Установка: work/logs/install-pointer-drag-2026-10-17-1815.log, SHA256 совпадают, data.json не изменился. Пользователь подтвердил в живом Obsidian: перенос быстрый, зависаний нет. Touch/Android NOT RUN.
 - PASS 98dd3dc: npm run build, полный check:fork (drag-refresh 14 проверок, новая регрессия высокой карточки RED на старом коде: work/logs/slot-red.log). Логи: work/logs/slot-build.log, slot-check.log.
