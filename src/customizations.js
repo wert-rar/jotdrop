@@ -39,7 +39,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   async function renderMarkdown(owner, parent, markdown, target, path, onTask) {
     const component = new Component();
     parent.addChild(component);
-    owner.markdownComponents.push({ parent, component });
+    owner.markdownComponents.push({ parent, component, target });
     await MarkdownRenderer.render(owner.app, markdown, target, path, component);
     const checkboxes = [...target.querySelectorAll('input.task-list-item-checkbox')]
       .filter(box => !box.closest('.internal-embed'));
@@ -281,28 +281,29 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     closeCapture.call(this);
   };
 
-  const collect = View.prototype.collectCards;
-  View.prototype.collectCards = async function () {
-    const cards = await collect.call(this);
-    for (const card of cards) {
-      const yaml = card.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-      let frontmatter = {};
-      if (yaml) {
-        frontmatter = this.app.metadataCache.getFileCache(card.file)?.frontmatter || {};
-        try {
-          frontmatter = obsidian.parseYaml(yaml[1]) || {};
-        } catch {
-          // One malformed note must not prevent the other cards from rendering.
-          // Retain cached metadata when available, without rewriting the note.
-        }
+  View.prototype.decorateCard = function (card, metadataOnly) {
+    const yaml = card.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    // A content refresh with no YAML must clear stale cached pin/rank fields.
+    let frontmatter = metadataOnly || yaml ? this.app.metadataCache.getFileCache(card.file)?.frontmatter || {} : {};
+    if (yaml && !metadataOnly) {
+      try {
+        frontmatter = obsidian.parseYaml(yaml[1]) || {};
+      } catch {
+        // One malformed note must not prevent the other cards from rendering.
+        // Retain cached metadata when available, without rewriting the note.
       }
-      card.order = Number.isFinite(frontmatter?.jotdrop_order) ? frontmatter.jotdrop_order : Infinity;
-      card.meta.pinned = frontmatter?.pinned === true || frontmatter?.pinned === 'true';
     }
-    if (this.plugin.settings.sortMode === 'manual') {
-      cards.sort((a, b) => a.order - b.order);
-    }
-    return cards;
+    card.order = Number.isFinite(frontmatter?.jotdrop_order) ? frontmatter.jotdrop_order : Infinity;
+    card.meta.pinned = frontmatter?.pinned === true || frontmatter?.pinned === 'true';
+  };
+  View.prototype.releaseCardMarkdown = function (cards) {
+    const removed = new Set(cards);
+    for (const card of cards) this.masonryObserver?.unobserve(card);
+    this.markdownComponents = (this.markdownComponents || []).filter(entry => {
+      if (!removed.has(entry.target.closest('.jotdrop-card'))) return true;
+      entry.parent.removeChild(entry.component);
+      return false;
+    });
   };
   View.prototype.moveCard = function (sourcePath, targetPath, after, columnTarget) {
     const execute = () => this.performCardMove(sourcePath, targetPath, after, columnTarget);
@@ -395,6 +396,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       // Reload authoritative files after a failed write, undoing the optimistic DOM move.
       this.plugin.settings.cardLayout=previousLayout;
       this.plugin.settings.sortMode=previousSort;
+      if (this.orderCards) this.invalidateCards({kind:'files',paths:this.orderCards.map(card=>card.file.path)});
       this.orderCards = null;
       this.renderPending = true;
       throw error;
@@ -555,7 +557,6 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     const scroll = this.contentEl.scrollTop;
     const height = this.gridEl?.style.minHeight;
     if (this.gridEl) this.gridEl.style.minHeight=`${this.gridEl.getBoundingClientRect().height}px`;
-    clearMarkdown(this);
     try { return renderCards.call(this, cards); }
     finally {
       if (this.gridEl) this.gridEl.style.minHeight=height;

@@ -12,6 +12,7 @@
     "verify:release": "node scripts/verify-release-source.mjs release",
     "verify:tag": "node scripts/verify-release-tag.mjs",
     "check:list-preview": "node scripts/check-list-preview.cjs",
+    "check:board-updates": "node scripts/check-board-updates.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
     "package:web-clipper": "node scripts/package-web-clipper.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",
@@ -19,7 +20,7 @@
     "android:test-release": "node scripts/build-android-release.mjs --test",
     "android:verify": "node scripts/verify-android-apk.mjs",
     "android:install": "node scripts/install-android-release.mjs",
-    "check:fork": "node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh && node scripts/check-fork-browser.cjs --drag-window"
+    "check:fork": "node scripts/check-board-updates.cjs && node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh && node scripts/check-fork-browser.cjs --drag-window"
   },
   "keywords": [
     "obsidian",

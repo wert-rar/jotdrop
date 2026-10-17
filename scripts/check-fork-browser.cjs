@@ -158,10 +158,10 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         vault: {
           getMarkdownFiles:()=>files, cachedRead:async file=>'---\n'+JSON.stringify(metadata.get(file))+'\n---\n'+text.get(file), read:async file=>text.get(file),
           getAbstractFileByPath:()=>({}), createFolder:async()=>{},
-          modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();return value;}
+          modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;for(const board of boards)board.invalidateCards({kind:'files',paths:[file.path]});plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews({kind:'files',paths:[file.path]});return value;}
         },
         fileManager: {
-          processFrontMatter:async(file,callback)=>{writes.push(file.path); callback(metadata.get(file));if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews();},
+          processFrontMatter:async(file,callback)=>{writes.push(file.path); callback(metadata.get(file));if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;for(const board of boards)board.invalidateCards({kind:'files',paths:[file.path]});plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews({kind:'files',paths:[file.path]});},
           renameFile:async(file,newPath)=>{file.path=newPath;}
         }, workspace:{openLinkText:async()=>{}},embedRegistry:{embedByExtension:{md:editorProbe}},
         hotkeyManager: {
@@ -180,11 +180,13 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         }
       };
       let refreshes = 0;
-      const plugin = {cardsVersion:0,settings:{notesFolder:'Grail',archiveFolder:'Grail/Archive',sortMode:'modified-desc',showArchived:false},saveSettings:async()=>{},refreshViews:()=>{refreshes++;plugin.cardsVersion++;},resolveAssetCandidates:()=>[],suppressedPaths:new Set(),suppressModifyOnce(path){this.suppressedPaths.add(path);}};
+      const boards = new Set();
+      const plugin = {cardsVersion:0,settings:{notesFolder:'Grail',archiveFolder:'Grail/Archive',sortMode:'modified-desc',showArchived:false},saveSettings:async()=>{},refreshViews:(change={kind:'all'})=>{refreshes++;plugin.cardsVersion++;for(const board of boards)board.invalidateCards(change);},resolveAssetCandidates:()=>[],suppressedPaths:new Set(),suppressModifyOnce(path){this.suppressedPaths.add(path);}};
       const makeView = (viewPlugin=plugin) => {
         const contentEl=document.body.createDiv({cls:'fixture-board'});
         Object.assign(contentEl.style,{height:'160px',width:'300px',overflow:'auto'});
-        return Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
+        const board = Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
+        boards.add(board);return board;
       };
       if (dragWindowOnly) {
         const NativeObserver=window.IntersectionObserver;
@@ -439,8 +441,9 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         text.set(perfFiles[0], 'Changed content');
         metadata.set(perfFiles[0], {tags:['keep']});
         perfFiles.pop();
+        plugin.refreshViews({kind:'files',paths:[perfFiles[0].path]});
         await board.render();
-        assert(reads === 159, 'external refresh rereads the current file set');
+        assert(reads === 1, 'external refresh reads only the changed file');
         assert(board.lastFiltered.length === 79 && !board.lastFiltered.some(card => card.file === perfFiles[0]), 'external refresh applies changed tags and deletion');
         reads = 0;
         await click('[data-action="show-all"]');
@@ -453,10 +456,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         reads = 0;
         board.toggleTagFilter('keep');
         await pending; await tick();
-        assert(reads === 159, 'in-place checkbox writes invalidate loaded snapshots without a board refresh');
+        assert(reads === 1, 'in-place checkbox invalidates only its own file');
         const updatedTaskCard = [...board.gridEl.querySelectorAll('.jotdrop-card')].find(card => card.dataset.path === taskPath);
         assert(updatedTaskCard.querySelector('.task-list-item-checkbox').checked, 'filtering preserves the saved checkbox state');
         slow = true;
+        plugin.refreshViews({kind:'files',paths:[perfFiles[0].path]});
         const refresh = board.render();
         board.toggleTagFilter('keep');
         await pending;
@@ -467,7 +471,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         // File changes invalidate the snapshot while the toolbar remains clickable.
         // Reproduce a refresh followed by two tag clicks during delayed file reads.
         reads = 0;
-        plugin.cardsVersion++;
+        plugin.refreshViews({kind:'files',paths:[perfFiles[0].path]});
         const burstRendersBefore = rendered.length;
         const burstLimit = board.renderLimit;
         const burstStarted = performance.now();
@@ -476,10 +480,10 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         board.toggleTagFilter('hide'); const secondToggle = pending;
         await Promise.all([burstRefresh, firstToggle, secondToggle]);
         const burstStats = {reads, markdownRenders:rendered.length-burstRendersBefore, elapsedMs:Math.round(performance.now()-burstStarted)};
-        assert(reads === 159, 'file invalidation plus rapid tag clicks must share one read pass: '+JSON.stringify(burstStats));
+        assert(reads === 1, 'file invalidation plus rapid tag clicks must share one read pass: '+JSON.stringify(burstStats));
         assert(burstStats.markdownRenders <= burstLimit, 'overlapping refreshes must commit only the latest grid: '+JSON.stringify(burstStats));
         assert(board.lastFiltered.length === 159, 'overlapping refreshes retain the final tag state');
-        reads = 0; plugin.cardsVersion++;
+        reads = 0; plugin.refreshViews({kind:'files',paths:[perfFiles[0].path]});
         const closingRefresh = board.render();
         await board.onClose();
         const rendersAtClose = rendered.length;
@@ -598,6 +602,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
 
       await tagClick('[data-action="show-all"]');
       metadata.get(files[3]).tags = ['archive', ...Array.from({length:9}, (_,i) => 'z' + i)];
+      plugin.refreshViews({kind:'metadata',paths:[files[3].path]});
       await tagView.render(); await tick();
       await tagClick('.is-overflow');
       const pickerRow = () => document.querySelector('.jotdrop-tagpicker-row[data-tag="z8"]');
@@ -639,10 +644,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       metadata.get(files[0]).pinned = false;
       app.vault.cachedRead = cachedReadBeforeMalformed;
       await view.collectCards();
+      const refreshesBeforeDrag = refreshes;
       await view.moveCard(files[2].path,files[0].path,false);
       assert(plugin.settings.sortMode==='manual','drop enables manual mode');
       assert(await ordinary()==='C,A,B','move before');
-      assert(refreshes===0,'drag/drop must not rebuild the board and reset its scroll');
+      assert(refreshes===refreshesBeforeDrag,'drag/drop must not rebuild the board and reset its scroll');
       files[0].stat.mtime = 999999;
       assert((await makeView().collectCards()).filter(card=>!card.meta.pinned).map(card=>card.file.basename).join(',')==='C,A,B','order survives view recreation and edits');
       const writesBeforeMove=writes.length;
@@ -797,6 +803,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       reopened.contentEl.style.width='900px';await reopened.render();await settleLayout();
       assert([...reopened.gridEl.querySelectorAll('.jotdrop-grid-col')].map(names).join('|')==='4,7|1,3,0,6|2,5,8','returning to the saved width restores manual placement');
       metadata.get(columnFiles[8]).pinned=true;
+      reopened.invalidateCards({kind:"metadata",paths:[columnFiles[8].path]});
       await reopened.render();await settleLayout();
       await reopened.moveCard(columnFiles[0].path,columnFiles[8].path,false);
       const pinnedSource=reopened.gridEl.querySelector(`[data-path="${columnFiles[0].path}"]`);

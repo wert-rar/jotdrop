@@ -1,6 +1,7 @@
-import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TFile, TAbstractFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
+import type { BoardRefresh } from "./view";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
@@ -31,6 +32,7 @@ export default class JotDropPlugin extends Plugin {
   // Paths whose next modify-event should be ignored: used during in-place
   // updates (e.g. color change) so the grid does not re-sort due to mtime bump.
   private readonly suppressedPaths: Set<string> = new Set();
+  private readonly suppressedMetadata: Set<string> = new Set();
   private reminderScheduler!: ReminderScheduler;
   private clipServer!: ClipServer;
 
@@ -60,28 +62,7 @@ export default class JotDropPlugin extends Plugin {
     this.reminderScheduler = new ReminderScheduler(this);
     this.clipServer = new ClipServer(this);
 
-    this.registerEvent(this.app.vault.on("create", (f) => {
-      if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
-      this.refreshViews();
-    }));
-    this.registerEvent(this.app.vault.on("delete", (f) => {
-      this.reminderScheduler.cancelFile(f.path);
-      this.refreshViews();
-    }));
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof TFile) this.reminderScheduler.scheduleFile(file);
-      if (this.suppressedPaths.has(file.path)) {
-        this.cardsVersion++;
-        this.suppressedPaths.delete(file.path);
-        return;
-      }
-      this.refreshViews();
-    }));
-    this.registerEvent(this.app.vault.on("rename", (f, oldPath) => {
-      this.reminderScheduler.cancelFile(oldPath);
-      if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
-      this.refreshViews();
-    }));
+    this.registerBoardEvents();
 
     this.app.workspace.onLayoutReady(() => {
       this.reminderScheduler.scheduleAll();
@@ -181,7 +162,7 @@ export default class JotDropPlugin extends Plugin {
       await updateMeta(this.app, file, { color, tags, pinned });
     }
     new Notice(t("notice_clip_saved", file.basename));
-    this.refreshViews();
+    this.refreshViews({ kind: "files", paths: [file.path] });
   }
 
   async loadSettings(): Promise<void> {
@@ -276,7 +257,11 @@ export default class JotDropPlugin extends Plugin {
    */
   suppressModifyOnce(path: string): void {
     this.suppressedPaths.add(path);
-    window.setTimeout(() => this.suppressedPaths.delete(path), 2000);
+    this.suppressedMetadata.add(path);
+    window.setTimeout(() => {
+      this.suppressedPaths.delete(path);
+      this.suppressedMetadata.delete(path);
+    }, 2000);
   }
 
   /**
@@ -310,8 +295,79 @@ export default class JotDropPlugin extends Plugin {
     }
   }
 
-  refreshViews(): void {
+  private registerBoardEvents(): void {
+    this.registerEvent(this.app.vault.on("create", (f) => {
+      if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
+      this.handleVaultChange(f);
+    }));
+    this.registerEvent(this.app.vault.on("delete", (f) => {
+      this.reminderScheduler.cancelFile(f.path);
+      this.handleVaultChange(f);
+    }));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (file instanceof TFile) this.reminderScheduler.scheduleFile(file);
+      if (this.suppressedPaths.has(file.path)) {
+        this.suppressedPaths.delete(file.path);
+        this.handleVaultChange(file, undefined, false);
+        return;
+      }
+      this.handleVaultChange(file);
+    }));
+    this.registerEvent(this.app.vault.on("rename", (f, oldPath) => {
+      this.reminderScheduler.cancelFile(oldPath);
+      if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
+      this.handleVaultChange(f, oldPath);
+    }));
+    this.registerEvent(this.app.metadataCache.on("changed", file => {
+      const suppressed = this.suppressedMetadata.delete(file.path);
+      if (this.isNotePath(file.path)) {
+        this.refreshViews({ kind: "metadata", paths: [file.path] }, !suppressed);
+      } else if (this.referencesBoardFile([file.path])) {
+        this.refreshViews({ kind: "assets" }, !suppressed);
+      }
+    }));
+  }
+
+  private isNotePath(path: string): boolean {
+    const root = normalizePath(this.settings.notesFolder);
+    return path === root || path.startsWith(root + "/");
+  }
+
+  private referencesBoardFile(paths: string[]): boolean {
+    for (const note of this.app.vault.getMarkdownFiles()) {
+      if (!this.isNotePath(note.path)) continue;
+      const cache = this.app.metadataCache.getFileCache(note);
+      for (const ref of [...(cache?.embeds ?? []), ...(cache?.links ?? [])]) {
+        const link = ref.link.split("#")[0];
+        const target = this.app.metadataCache.getFirstLinkpathDest(link, note.path)?.path;
+        if (paths.some(path => target === path || target?.startsWith(path + "/") ||
+          path.replace(/\.md$/, "") === link.replace(/\.md$/, "") ||
+          path.split("/").pop()!.replace(/\.md$/, "") === link.replace(/\.md$/, ""))) return true;
+      }
+    }
+    return false;
+  }
+
+  handleVaultChange(file: TAbstractFile, oldPath?: string, schedule = true): void {
+    const paths = oldPath === undefined ? [file.path] : [oldPath, file.path];
+    const root = normalizePath(this.settings.notesFolder);
+    if (paths.some(path => this.isNotePath(path) || root.startsWith(path + "/"))) {
+      if (file instanceof TFile && file.extension !== "md") {
+        this.refreshViews({ kind: "assets" }, schedule);
+      } else {
+        this.refreshViews({ kind: "files", paths }, schedule);
+      }
+    } else if (!(file instanceof TFile) || file.extension !== "md" || this.referencesBoardFile(paths)) {
+      this.refreshViews({ kind: "assets" }, schedule);
+    }
+  }
+
+  refreshViews(change: BoardRefresh = { kind: "all" }, schedule = true): void {
     this.cardsVersion++;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_JOTDROP)) {
+      if (leaf.view instanceof JotDropView) leaf.view.invalidateCards(change);
+    }
+    if (!schedule) return;
     if (this.refreshTimer != null) {
       window.clearTimeout(this.refreshTimer);
     }

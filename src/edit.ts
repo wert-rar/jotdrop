@@ -318,7 +318,7 @@ export class EditNoteModal extends Modal {
         this.renderControls(parent);
         try {
           await updateMeta(this.app, this.file, { color: name });
-          this.plugin.refreshViews();
+          this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
         } catch (err) {
           new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
         }
@@ -336,7 +336,7 @@ export class EditNoteModal extends Modal {
       this.renderControls(parent);
       try {
         await updateMeta(this.app, this.file, { pinned: this.state.pinned });
-        this.plugin.refreshViews();
+        this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
@@ -372,7 +372,7 @@ export class EditNoteModal extends Modal {
       this.state.reminder = reminderInput.value.trim() || null;
       try {
         await updateMeta(this.app, this.file, { reminder: this.state.reminder });
-        this.plugin.refreshViews();
+        this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
@@ -386,7 +386,7 @@ export class EditNoteModal extends Modal {
       this.state.reminder = null;
       try {
         await updateMeta(this.app, this.file, { reminder: null });
-        this.plugin.refreshViews();
+        this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
@@ -601,7 +601,7 @@ export class EditNoteModal extends Modal {
       this.originalEmbeds = [...this.state.embedLines];
       this.originalTags = [...this.state.tags];
       new Notice(t("notice_saved", this.file.basename));
-      this.plugin.refreshViews();
+      this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

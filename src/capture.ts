@@ -291,7 +291,7 @@ export class QuickCaptureModal extends Modal {
         });
       }
       new Notice(t("notice_saved", file.basename));
-      this.plugin.refreshViews();
+      this.plugin.refreshViews({ kind: "files", paths: [file.path] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_save_failed", message));

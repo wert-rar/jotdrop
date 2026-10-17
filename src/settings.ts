@@ -164,7 +164,7 @@ export class JotDropSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.sortMode = value as SortMode;
             await this.plugin.saveSettings();
-            this.plugin.refreshViews();
+            this.plugin.refreshViews({ kind: "layout" });
           })
       );
 
@@ -178,7 +178,7 @@ export class JotDropSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.cardWidth = value;
             await this.plugin.saveSettings();
-            this.plugin.refreshViews();
+            this.plugin.refreshViews({ kind: "layout" });
           })
       );
 

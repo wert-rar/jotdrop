@@ -1,38 +1,50 @@
 # PROJECTSTATUS
 
 ## Current goals
-- Ветка codex/drag-filter-wip-20261016: фильтры тегов, ручной порядок и исправления переноса. В main не слита.
-- 2026-10-16: добавлена защита всего интервала dragstart → dragend от обновления доски; установлена в Obsidian для проверки пользователем.
-- Подробная история проблемы: [DRAG_FILTER_PROBLEM.md](DRAG_FILTER_PROBLEM.md), [docs/drag-filter-regression-research.md](docs/drag-filter-regression-research.md).
+- Реализация трёх оптимизаций завершена и проверена в стенде. Подготовить ревью; установка и проверка в настоящем Obsidian — отдельный следующий этап.
+- Latest session report: [2026-10-17-1542](work-reports/2026-10-17-1542.md).
 
 ## Completed tasks still relevant to the current phase
-- Есть меню ручного порядка/создания/изменения и фильтры тегов с сохранением DOM; совпадающие чтения объединяются.
-- Перенос в пустую колонку сохраняет позицию в своей группе; дозагрузка учитывает сохранённые ручные колонки (d42e0d0).
-- Обновление доски во время переноса больше не удаляет перетаскиваемую карточку: render откладывается, пока задан draggedPath; чтение, начатое до dragstart, отбрасывается; отложенное обновление выполняет performCardMove после drop или обработчик dragend при отмене.
+- Поиск использует кэш и сохраняет DOM; посторонние Markdown-события не обновляют доску; заметки и метаданные инвалидируются адресно.
+- Обновление одной карточки сохраняет остальные DOM/Markdown-компоненты; удаление, rename и перемещение папок согласованы с кэшем.
+- Сохранены фильтры, ручные колонки, сортировка, выделение и защита всего dragstart → dragend, включая незавершённое чтение и отмену без drop.
+- Добавлены регрессии событий/двух представлений/асинхронных чтений и измерение порционной загрузки.
+- Результаты и ограничения: [аудит производительности](docs/plugin-performance-audit.md).
 
 ## Key technical decisions
-- Проверенный origin/main: c634354dfaa51bf07cd4c38f57532cb67888cce7.
-- Механизм зависания: render во время native drag очищает gridEl, исходный элемент отсоединяется, браузер не доставляет drop/dragend. Срабатывает только при совпадении обновления (изменение файла, refreshViews) с переносом, поэтому симптом нерегулярный.
-- Профиль настоящего Obsidian 1.14.4 (через --remote-debugging-port=9222) без такого обновления: 4 переноса, 4 drop, длинных задач нет, кадры ≤ 50 мс. Лог: work/logs/obsidian-drag-summary.txt.
-- Интеграция main/upstream отложена: docs/upstream-update-assessment.md.
+- Canonical AgentMemory scope: wert-rar/jotdrop. MCP повторно проверен и недоступен; recall/save не выполнялись.
+- Кэш данных — на представление; общий cardsVersion защищает принятие результатов. Инвалидация передаётся сразу, обновления объединяются с задержкой 150 мс.
+- Причины обновления: files, metadata, layout, assets, all. Формат настроек не изменён.
+- Виртуализация и параллельное чтение отложены по выбору пользователя до реальных измерений.
+- База HEAD и live origin/main: b1accedbdde4e3916c0656326a56a5e577e7c048 при финальной gated-сборке. Реализация пока не закоммичена.
+- Установленный ранее плагин остаётся b1acced / manifest 0.20.5 в C:/Users/zhigu/GitHub/Obsidian/.obsidian/plugins/jotdrop. Установка только через deploy:local из чистого коммита с проверкой main; новая установка не выполнялась.
 
 ## Main files changed
-- src/customizations.js: guard render по draggedPath, сброс начатого чтения в dragstart, отложенный render в dragend.
-- scripts/check-fork-browser.cjs: --drag-refresh дополнен 3 native-переносами (refresh после dragstart, чтение, завершившееся во время drag, отмена без drop) с таймаутом зависания 10 с.
+- src/main.ts, src/view.ts, src/customizations.js: события, адресный кэш, DOM и жизненный цикл Markdown-компонентов.
+- src/edit.ts, src/capture.ts, src/settings.ts: адресные причины обновлений.
+- scripts/check-board-updates.cjs, scripts/check-fork-browser.cjs, scripts/probe-plugin-performance.cjs, package.json: регрессии и измерения.
+- docs/plugin-performance-audit.md, PROJECTSTATUS.md, work-reports/2026-10-17-1542.md: итоговая документация. Предыдущие локальные отчёты 1457 и 1507 сохранены.
 
 ## Testing and verification results
-- RED без исправления: `node scripts/check-fork-browser.cjs --drag-refresh` → «native drag stalled: refresh» (work/logs/claude-drag-refresh-before.log).
-- PASSED с исправлением: tsc; полный набор check:fork — Markdown, 177 browser integration, native mouse/gap/background, 22 tag, 250 retention, 9 drag/refresh + 3 native, 7 drag/window (work/logs/claude-check-fork.log).
-- probe-drag-filter refresh-during-drag: trusted dragstart/drop/dragend, колонка 1.
-- Android NOT RUN (не затронут).
+- PASS: финальная npm run build с source gate; полный npm run check:fork (69 новых, 177 общих browser checks, Markdown, 22 tag, 250 retention, 9 drag-refresh, 7 drag-window и native drag).
+- PASS: 21 performance assertions. На 1000 заметках поиск: 0 cachedRead / 0 Markdown-рендеров; изменение одной видимой заметки: 1 / 1, сохранены 59 из 60 DOM; дозагрузка: 0 чтений.
+- PASS: git diff --check перед итоговой документацией. Логи: work/logs/board-final-build.log, board-final-check.log, board-performance-final.json.
+- NOT RUN: живой Obsidian, heap в байтах, Android, установка и релиз. Значения производительности относятся к synthetic fixture.
 
 ## Known issues
-- Подтверждение пользователя в Obsidian после установки защиты ожидается.
-- Мобильный touch-перенос не реализован (FORK.md).
+- Первое открытие по-прежнему последовательно читает все заметки; скрытые загруженные карточки удерживаются до перестройки/закрытия. Утечка не установлена.
+- Вложения продолжают инициировать обновление представления без чтения текстов; адресное обновление отдельных зависимых вложений не реализовывалось.
+- Изменения ещё не проверены в настоящем Obsidian. Подтверждение ранее установленного исправления переноса также ожидается.
+- Мобильный touch-перенос не реализован (FORK.md). AgentMemory MCP недоступен.
 
 ## Approaches already tried but unsuccessful
-- Ранние исправления гонки refresh и зон drop защищали только период после drop.
+- Поиск через render() повторно читал все заметки; заменён использованием актуального снимка.
+- В тестовом адаптере TFile сначала создавался заново при каждом require и нарушал instanceof; исправлен стабильным классом.
+- Первый полный прогон остановился на старом глобальном счётчике refresh; проверка ограничена интервалом drag. Последующие полные проверки прошли.
+- При введении кэша найдено сохранение pin/rank после удаления frontmatter; закреплено падающим тестом и исправлено.
+- Ранние исправления переноса защищали только период после drop; действующая защита покрывает весь drag.
 
 ## Ordered next development steps
-1. Получить подтверждение пользователя, что перенос больше не зависает.
-2. Решить слияние ветки в main и интеграцию upstream.
+1. Просмотреть изменения и подготовить чистый проверенный коммит для отдельной установки; до этого не deploy.
+2. После разрешённой установки проверить поиск, checkbox, архивирование, сортировку и перенос в Obsidian.
+3. Измерить реальное открытие, прокрутку и память; затем решать о виртуализации/параллельном чтении.

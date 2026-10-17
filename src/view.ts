@@ -97,7 +97,12 @@ interface CardData {
   content: string;
   meta: NoteMeta;
   archived: boolean;
+  order: number;
 }
+
+export type BoardRefresh =
+  | { kind: "files" | "metadata"; paths: string[] }
+  | { kind: "all" | "layout" | "assets" };
 
 interface AttachmentResource {
   resourcePath: string;
@@ -110,6 +115,10 @@ interface AttachmentResource {
 export class JotDropView extends ItemView {
   declare renderCardMarkdown: (container: HTMLElement, markdown: string, file: TFile) => void;
   declare reflowCards: (animate?: boolean) => void;
+  declare decorateCard: (card: CardData, metadataOnly: boolean) => void;
+  declare releaseCardMarkdown: (cards: HTMLElement[]) => void;
+  declare observeCardSize: (card: HTMLElement) => void;
+  declare registerColumnDrops: (inner: HTMLElement) => void;
   plugin: JotDropPlugin;
   private gridEl!: HTMLElement;
   private searchEl!: HTMLInputElement;
@@ -130,7 +139,12 @@ export class JotDropView extends ItemView {
   private filterCardsVersion = -1;
   private cardRead: { version: number; promise: Promise<CardData[]> } | null = null;
   private renderRequest = 0;
-  private retainedCards = new Map<string, { element: HTMLElement; column: HTMLElement }>();
+  private retainedCards = new Map<string, { element: HTMLElement; column: HTMLElement; data: CardData }>();
+  private cardCache = new Map<string, CardData>();
+  private dirtyContents = new Set<string>();
+  private dirtyMetadata = new Set<string>();
+  private reloadAll = true;
+  private resetCardElements = true;
   private appendCardToLayout: ((card: CardData) => void) | null = null;
   private preserveCardColumns = false;
   private micBtnEl: HTMLButtonElement | null = null;
@@ -194,7 +208,7 @@ export class JotDropView extends ItemView {
       if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
       this.searchTimer = window.setTimeout(() => {
         this.searchTimer = null;
-        void this.render();
+        void this.render(true);
       }, SEARCH_DEBOUNCE_MS);
     });
 
@@ -216,7 +230,7 @@ export class JotDropView extends ItemView {
       if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
       this.resizeTimer = window.setTimeout(() => {
         this.resizeTimer = null;
-        void this.render();
+        void this.render(true);
       }, 100);
     });
     this.resizeObserver.observe(root);
@@ -254,7 +268,7 @@ export class JotDropView extends ItemView {
             this.plugin.settings.sortMode = mode;
             await this.plugin.saveSettings();
             this.updateSortControl();
-            this.plugin.refreshViews();
+            this.plugin.refreshViews({ kind: "layout" });
           }));
       }
       const bounds = button.getBoundingClientRect();
@@ -725,6 +739,9 @@ export class JotDropView extends ItemView {
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
     if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
     this.retainedCards.clear();
+    this.cardCache.clear();
+    this.dirtyContents.clear();
+    this.dirtyMetadata.clear();
     this.appendCardToLayout = null;
     this.filterCards = null;
     this.contentEl.empty();
@@ -736,11 +753,28 @@ export class JotDropView extends ItemView {
     }
   }
 
+  invalidateCards(change: BoardRefresh): void {
+    if (change.kind === "all") {
+      this.reloadAll = true;
+      this.resetCardElements = true;
+    } else if (change.kind === "assets") {
+      this.resetCardElements = true;
+    } else if (change.kind === "files" || change.kind === "metadata") {
+      const dirty = change.kind === "files" ? this.dirtyContents : this.dirtyMetadata;
+      for (const path of change.paths) {
+        dirty.add(path);
+        for (const cachedPath of this.cardCache.keys()) {
+          if (cachedPath.startsWith(path + "/")) dirty.add(cachedPath);
+        }
+      }
+    }
+  }
+
   async render(reuseCards = false): Promise<void> {
     if (!this.gridEl) return;
     this.updateSortControl();
     const request = ++this.renderRequest;
-    // Visibility changes use the loaded snapshot; vault/settings refreshes reread it.
+    // Visibility changes use the snapshot; other requests refresh only dirty files.
     const version = this.plugin.cardsVersion;
     const reuseSnapshot = reuseCards && this.filterCards !== null && this.filterCardsVersion === version;
     let cards: CardData[];
@@ -763,7 +797,12 @@ export class JotDropView extends ItemView {
     const reuseLayout = reuseSnapshot && this.appendCardToLayout !== null && this.computeColumnCount() === this.lastColumnCount;
     this.filterCards = cards;
     this.filterCardsVersion = version;
+    this.cardCache = new Map(cards.map(card => [card.file.path, card]));
     this.renderCards(cards, reuseLayout);
+    this.dirtyContents.clear();
+    this.dirtyMetadata.clear();
+    this.reloadAll = false;
+    this.resetCardElements = false;
   }
 
   private renderCards(cards: CardData[], reuseLayout = false): void {
@@ -772,7 +811,12 @@ export class JotDropView extends ItemView {
       this.filterRenderedCards(cards);
       return;
     }
-    this.retainedCards.clear();
+    const previous = this.retainedCards;
+    this.retainedCards = new Map();
+    const releaseUnused = (): void => {
+      this.releaseCardMarkdown(Array.from(previous.values(), entry => entry.element));
+      previous.clear();
+    };
     this.appendCardToLayout = null;
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
@@ -795,6 +839,7 @@ export class JotDropView extends ItemView {
     if (this.selectionMode) this.updateSelectionToolbar();
 
     if (filtered.length === 0) {
+      releaseUnused();
       this.renderEmpty(cards);
       return;
     }
@@ -853,11 +898,23 @@ export class JotDropView extends ItemView {
       const layout = this.plugin.settings.sortMode === 'manual' ? this.plugin.settings.cardLayout : null;
       const savedColumn = layout?.columnCount === columnCount ? layout.columns[c.file.path] : undefined;
       if (savedColumn !== undefined) column = column.parentElement!.children[savedColumn] as HTMLElement;
-      this.renderCard(column, c);
-      this.retainedCards.set(c.file.path, { element: column.lastElementChild as HTMLElement, column });
+      column.parentElement!.dataset.pinned = String(c.meta.pinned);
+      this.registerColumnDrops(column.parentElement!);
+      const retained = previous.get(c.file.path);
+      if (retained && retained.data === c && !this.resetCardElements) {
+        column.appendChild(retained.element);
+        this.applyCardSelectionVisual(retained.element, this.selectedPaths.has(c.file.path));
+        retained.element.draggable = !this.selectionMode;
+        this.observeCardSize(retained.element);
+        previous.delete(c.file.path);
+      } else {
+        this.renderCard(column, c);
+      }
+      this.retainedCards.set(c.file.path, { element: column.lastElementChild as HTMLElement, column, data: c });
     };
     this.appendCardToLayout = appendCard;
     this.renderWindow(ordered, appendCard, true);
+    releaseUnused();
   }
 
   private renderWindow(ordered: CardData[], appendCard: (card: CardData) => void, rebalance: boolean): void {
@@ -1128,15 +1185,26 @@ export class JotDropView extends ItemView {
 
     const cards: CardData[] = [];
     for (const file of sorted) {
-      const content = await this.app.vault.cachedRead(file);
+      const cached = this.cardCache.get(file.path);
+      const readContent = this.reloadAll || !cached || this.dirtyContents.has(file.path);
+      if (!readContent && !this.dirtyMetadata.has(file.path)) {
+        cards.push(cached!);
+        continue;
+      }
+      const content = readContent ? await this.app.vault.cachedRead(file) : cached!.content;
       const meta = readMeta(this.app, file);
-      cards.push({
+      const card: CardData = {
         file,
         content,
         meta,
         archived: isUnder(file.path, archive),
-      });
+        order: Infinity,
+      };
+      this.decorateCard(card, !readContent);
+      cards.push(cached && cached.content === card.content && cached.archived === card.archived &&
+        cached.order === card.order && JSON.stringify(cached.meta) === JSON.stringify(card.meta) ? cached : card);
     }
+    if (this.plugin.settings.sortMode === "manual") cards.sort((a, b) => a.order - b.order);
     return cards;
   }
 
@@ -1194,7 +1262,7 @@ export class JotDropView extends ItemView {
     quickPinBtn.addEventListener("click", voidAsync(async (e) => {
       e.stopPropagation();
       await updateMeta(this.app, file, { pinned: !meta.pinned });
-      this.plugin.refreshViews();
+      this.plugin.refreshViews({ kind: "files", paths: [file.path] });
     }));
     quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
 
@@ -1410,7 +1478,7 @@ export class JotDropView extends ItemView {
             );
             await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
             new Notice(t("notice_deleted", file.basename));
-            this.plugin.refreshViews();
+            this.plugin.refreshViews({ kind: "files", paths: [file.path] });
           })
       );
       menu.showAtMouseEvent(e);
@@ -1569,6 +1637,7 @@ export class JotDropView extends ItemView {
    * `notesFolder` → disappears automatically from the view on refresh.
    */
   private async moveNote(file: TFile, targetFolder: string): Promise<void> {
+    const oldPath = file.path;
     const target = normalizePath(`${targetFolder}/${file.name}`);
     if (target === file.path) return;
     if (this.app.vault.getAbstractFileByPath(target)) {
@@ -1581,7 +1650,7 @@ export class JotDropView extends ItemView {
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
     }
-    this.plugin.refreshViews();
+    this.plugin.refreshViews({ kind: "files", paths: [oldPath, file.path] });
   }
 
   /**
@@ -1606,10 +1675,11 @@ export class JotDropView extends ItemView {
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
     }
-    this.plugin.refreshViews();
+    this.plugin.refreshViews({ kind: "files", paths: [target] });
   }
 
   private async toggleArchive(file: TFile, currentlyArchived: boolean): Promise<void> {
+    const oldPath = file.path;
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     const notesFolder = normalizePath(this.plugin.settings.notesFolder);
     try {
@@ -1629,7 +1699,7 @@ export class JotDropView extends ItemView {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_error", message));
     }
-    this.plugin.refreshViews();
+    this.plugin.refreshViews({ kind: "files", paths: [oldPath, file.path] });
   }
 }
 
