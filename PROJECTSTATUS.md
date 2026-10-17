@@ -1,7 +1,7 @@
 # PROJECTSTATUS
 
 ## Current goals
-- 2026-10-17: ПОДТВЕРЖДЕНО пользователем в Obsidian — с 1bc2b3b (перенос на pointer events вместо HTML5 drag-and-drop) перенос быстрый, зависаний нет. Ветка codex/drag-filter-wip-20261016 не запушена; следующий шаг — решить о push/PR в main.
+- 2026-10-17 23:10: по просьбе пользователя перенос возвращён на системный (Windows/HTML5) drag-and-drop — f499f43 откатывает 1bc2b3b, остальные улучшения ветки сохранены. Установлено во второй машине. Ранее пользователь подтвердил, что pointer-перенос 1bc2b3b не зависал; на нативном переносе возможен возврат зависаний (модальный цикл ОС). Ветка не запушена в main.
 - Включены 98dd3dc (слот по верхнему краю, индикатор стороны, отступ закреплённых +20 px) и 2087dd4 (анимация 80 мс). Временная трассировка 3baf80b откатана (e59498c); копия трассы: work/logs/drag-trace-3baf80b-2026-10-17.json.
 - Latest session report: [2026-10-17-1705](work-reports/2026-10-17-1705.md).
 
@@ -18,9 +18,9 @@
 - Кэш данных — на представление; общий cardsVersion защищает принятие результатов. Инвалидация передаётся сразу, обновления объединяются с задержкой 150 мс.
 - Причины обновления: files, metadata, layout, assets, all. Формат настроек не изменён.
 - Виртуализация и параллельное чтение отложены по выбору пользователя до реальных измерений.
-- Установленный источник: 1bc2b3b на ветке codex/drag-filter-wip-20261016, на базе live origin/main b1accedbdde4e3916c0656326a56a5e577e7c048. Установка из чистого коммита через deploy:local, без push и релизного тега.
-- Плагин: C:/Users/zhigu/GitHub/Obsidian/.obsidian/plugins/jotdrop, manifest 0.20.5. Бэкап перед 1bc2b3b (там стоял b1acced): work/backups/jotdrop-before-pointer-drag-2026-10-17-1815.
-- Перенос карточек: pointer events (мышь/перо), порог 10 px = порог отмены долгого нажатия; touch по-прежнему прокручивает и выделяет долгим нажатием. Нативный draggable отключён, dragstart внутри карточки отменяется.
+- Установленный источник: f499f43 на ветке codex/drag-filter-wip-20261016, на базе live origin/main b1accedbdde4e3916c0656326a56a5e577e7c048. На этой машине npm нет: шаги deploy:local (verify:deploy, verify:base, tsc, esbuild, копирование) выполнены вручную через node из ~/.cache/codex-runtimes; без push и релизного тега.
+- Плагин: C:/Users/zhigu/Documents/Obsidian/.obsidian/plugins/jotdrop (вторая машина; первая — C:/Users/zhigu/GitHub/Obsidian, там стоит 1bc2b3b), manifest 0.20.5. Бэкап перед f499f43 (там стоял b1acced): work/backups/jotdrop-before-native-drag-2026-10-17-2310. Лог: work/logs/install-native-drag.log; SHA256 совпадают, data.json не изменился.
+- Перенос карточек: нативный HTML5 drag-and-drop (draggable вне режима выделения); render откладывается на весь dragstart → dragend. Pointer-вариант остаётся в истории (1bc2b3b).
 
 ## Main files changed
 - src/main.ts, src/view.ts, src/customizations.js: события, адресный кэш, DOM и жизненный цикл Markdown-компонентов.
@@ -30,6 +30,7 @@
 - work-reports/2026-10-17-1554.md: локальная установка и проверка файлов.
 
 ## Testing and verification results
+- PASS f499f43: verify:deploy + verify:base, tsc, esbuild production; --drag-refresh (14 + 3 native), --drag-window (7). Логи: work/logs/native-drag-build.log, native-drag-refresh.log, native-drag-window.log. Полный check:fork и живой Obsidian NOT RUN.
 - PASS 1bc2b3b: npm run build, полный check:fork (179 browser, 19 drag-refresh, 7 drag-window, реальные мышиные переносы Playwright), git diff --check. Стенд на реальных текстах Grail: 8 переносов, попадание в колонку, long tasks нет. Логи: work/logs/pointer-build.log, pointer-check.log. Установка: work/logs/install-pointer-drag-2026-10-17-1815.log, SHA256 совпадают, data.json не изменился. Пользователь подтвердил в живом Obsidian: перенос быстрый, зависаний нет. Touch/Android NOT RUN.
 - PASS 98dd3dc: npm run build, полный check:fork (drag-refresh 14 проверок, новая регрессия высокой карточки RED на старом коде: work/logs/slot-red.log). Логи: work/logs/slot-build.log, slot-check.log.
 - PASS установка 3baf80b: deploy:local, SHA256 трёх assets совпадают, data.json не изменился. Бэкап: work/backups/jotdrop-before-slot-trace-2026-10-17-1742. Лог: work/logs/install-slot-trace-2026-10-17-1742.log. Трассировка в живом Obsidian не проверялась.
