@@ -145,8 +145,6 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     });
     const installed = fs.readFileSync('main.js', 'utf8');
     await page.addScriptTag({ content: installed + '\nwindow.fixtureClasses={EditModal:module.exports.EditNoteModal,CaptureModal:module.exports.QuickCaptureModal,View:module.exports.JotDropView};' });
-    // Pointer drags hit-test real coordinates, so the wide window fixture must fit on screen.
-    if (dragWindowOnly) await page.setViewportSize({ width: 1700, height: 900 });
     const result = await page.evaluate(async ({tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,dragWindowOnly,sampleMarkdown}) => {
       let checks = 0;
       const assert = (value, message) => { if (!value) throw new Error(message); checks++; };
@@ -190,27 +188,6 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const board = Object.assign(new fixtureClasses.View({},viewPlugin), {app,plugin:viewPlugin,contentEl,gridEl:contentEl.createDiv(),selectedPaths:new Set(),selectionMode:false,markdownComponents:[]});
         boards.add(board);return board;
       };
-      // Cards move with pointer events. carry() grabs the source so that its top edge
-      // lands before (or after) a target card, or inside an empty column, and releases.
-      const pointerAt=(type,target,x,y)=>target.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,composed:true,pointerId:7,pointerType:'mouse',isPrimary:true,button:0,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
-      const carry=async(view,source,target,{after=false,release=true}={})=>{
-        view.contentEl.scrollIntoView({block:'nearest'});
-        // Like a user, scroll the board only when the target is entirely out of view.
-        const visible=()=>{const b=view.contentEl.getBoundingClientRect(),r=target.getBoundingClientRect();return r.bottom>b.top&&r.top<b.bottom;};
-        if(!visible())target.scrollIntoView({block:'start'});
-        const box=view.contentEl.getBoundingClientRect(),t=target.getBoundingClientRect(),from=source.getBoundingClientRect();
-        const x=Math.min(Math.max(t.left+12,box.left+2),box.right-2);
-        const y=Math.min(Math.max(t.top+t.height/2,box.top+2),box.bottom-2);
-        const top=target.classList.contains('jotdrop-card')?(after?t.top+t.height*0.75:t.top+1):y;
-        const grab=Math.min(Math.max(y-top,0),from.height);
-        pointerAt('pointerdown',source,from.left+10,from.top+grab);
-        pointerAt('pointermove',source,from.left+30,from.top+grab+20);
-        pointerAt('pointermove',source,x,y);
-        const lift={x,y,slot:view.dropSlot};
-        if(release)await drop(view,source,lift);
-        return lift;
-      };
-      const drop=async(view,source,lift)=>{pointerAt('pointerup',source,lift.x,lift.y);await tick();await view.orderQueue;await tick();};
       if (dragWindowOnly) {
         const NativeObserver=window.IntersectionObserver;
         let loadNext;
@@ -231,7 +208,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const sourcePath=windowFiles[16].path;
         const source=board.gridEl.querySelector(`[data-path="${sourcePath}"]`);
         const column=board.gridEl.querySelector('.jotdrop-grid-inner[data-pinned="false"]').children[3];
-        await carry(board,source,column);
+        const transfer=new DataTransfer();
+        source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+        column.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
+        await board.orderQueue;
+        source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:transfer}));
         assert(source.parentElement===column,'windowed drop immediately reaches the chosen empty column');
         board.excludedTags.add('irrelevant');
         await board.render(true);
@@ -269,28 +250,15 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const stack=column=>[...column.children].map(node=>node.jotdropData.file.basename).join(',');
         assert(slotColumns.map(stack).join('|')==='0|1,3,5|2,4','slot fixture packs a tall card alone in the first column');
         const tall=slotNode(0),low=slotNode(3),lowRect=low.getBoundingClientRect(),tallRect=tall.getBoundingClientRect();
-        slotBoard.contentEl.scrollIntoView({block:'nearest'});
-        const grab=380;
-        pointerAt('pointerdown',tall,tallRect.left+10,tallRect.top+grab);
-        pointerAt('pointermove',tall,tallRect.left+30,tallRect.top+grab+20);
+        const grab=380,slotTransfer=new DataTransfer();
+        tall.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:slotTransfer,clientY:tallRect.top+grab}));
         const columnRect=slotColumns[1].getBoundingClientRect(),pointerY=lowRect.top+10+grab;
         assert(pointerY>slotNode(5).getBoundingClientRect().bottom,'pointer sits below the target stack while the card top is above the target middle');
-        pointerAt('pointermove',tall,columnRect.left+20,pointerY);
+        slotColumns[1].dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:slotTransfer,clientX:columnRect.left+20,clientY:pointerY}));
         assert(low.classList.contains('jotdrop-drop-before')&&!slotColumns[1].classList.contains('jotdrop-column-drop'),'marker shows the card top edge slot, not the column end');
-        assert(document.querySelectorAll('.jotdrop-drag-ghost').length===1&&tall.classList.contains('is-dragging'),'a floating copy follows the pointer while the source stays in place');
-        const modalsBefore=document.querySelectorAll('.modal').length;
-        pointerAt('pointerup',tall,columnRect.left+20,pointerY);
-        // Browsers click the element under the released pointer; that must not open the note.
-        tall.querySelector('.jotdrop-card-body')?.click();
-        assert(document.querySelectorAll('.modal').length===modalsBefore,'releasing a carried card does not open it');
-        await tick();await slotBoard.orderQueue;await tick();
-        assert(!document.querySelector('.jotdrop-drag-ghost')&&!tall.classList.contains('is-dragging'),'the floating copy is removed after the drop');
-        tall.querySelector('.jotdrop-card-body').click();
-        assert(document.querySelectorAll('.modal').length===modalsBefore+1,'a later ordinary click still opens the note');
-        document.querySelectorAll('.modal').forEach(modal=>modal.remove());
-        const nativeStart=new DragEvent('dragstart',{bubbles:true,cancelable:true});
-        tall.dispatchEvent(nativeStart);
-        assert(!tall.draggable&&nativeStart.defaultPrevented,'cards never start an OS drag');
+        slotColumns[1].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:slotTransfer}));
+        await slotBoard.orderQueue;
+        tall.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:slotTransfer}));
         assert(stack(slotColumns[1])==='1,0,3,5','a tall card lands where its top edge was shown, not at the bottom of the column: '+slotColumns.map(stack).join('|'));
         assert(!slotBoard.gridEl.querySelector('.jotdrop-drop-before, .jotdrop-drop-after, .jotdrop-column-drop'),'drop markers are cleared after the drag');
         await slotBoard.onClose();slotBoard.contentEl.remove();
@@ -334,7 +302,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         assert(nodes.length===7&&new Set(nodes.map(node=>node.dataset.path)).size===7,'all cards remain present once after refresh and consecutive moves');
         assert(board.gridEl.querySelector(`[data-path="${sourcePath}"]`).parentElement===board.gridEl.querySelectorAll('.jotdrop-grid-col')[1],'target column survives the next authoritative refresh');
         await board.onClose();board.contentEl.remove();
-        // Mouse drags: a refresh between drag start and release must not replace the carried card.
+        // Native drags: a refresh during dragstart → dragend must not detach the carried card.
         window.createNativeRefreshFixture=async mode=>{
           document.body.replaceChildren();
           const nativeFiles=Array.from({length:6},(_,i)=>({path:`NativeRace/${i}.md`,name:`${i}.md`,basename:String(i),stat:{ctime:6-i,mtime:6-i}}));
@@ -348,18 +316,16 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
           const incoming={path:'NativeRace/incoming.md',name:'incoming.md',basename:'incoming',stat:{ctime:0,mtime:0}};
           const addIncoming=()=>{nativeFiles.push(incoming);metadata.set(incoming,{pinned:false,tags:['keep'],jotdrop_order:6144});text.set(incoming,'# Incoming note');};
           const state=window.nativeRefreshFixture={board:nativeBoard,events:[],sourceAtDrop:null,refresh:null};
-          const finish=nativeBoard.finishCardDrag,start=nativeBoard.startCardDrag;let onStart=()=>{};
-          nativeBoard.finishCardDrag=function(commit){state.events.push({type:'finish',slot:!!this.dropSlot});state.sourceAtDrop=nativeSource.isConnected;return finish.call(this,commit);};
-          nativeBoard.startCardDrag=function(...args){const result=start.apply(this,args);onStart();return result;};
-          document.addEventListener('pointerdown',event=>state.events.push({type:'pointerdown',trusted:event.isTrusted}),true);
+          document.addEventListener('drop',event=>{state.events.push({type:'drop',trusted:event.isTrusted});state.sourceAtDrop=nativeSource.isConnected;},true);
+          nativeSource.addEventListener('dragend',event=>state.events.push({type:'dragend',trusted:event.isTrusted}));
           if(mode==='read'){
             const read=app.vault.cachedRead;let releaseRead,paused=false;
             const gate=new Promise(resolve=>{releaseRead=resolve;});
             app.vault.cachedRead=async file=>{const value=await read(file);if(!paused){paused=true;await gate;}return value;};
             addIncoming();state.refresh=nativeBoard.render();
-            onStart=()=>{app.vault.cachedRead=read;releaseRead();};
+            nativeSource.addEventListener('dragstart',()=>{app.vault.cachedRead=read;releaseRead();});
           } else {
-            onStart=()=>{addIncoming();state.refresh=nativeBoard.render();};
+            nativeSource.addEventListener('dragstart',()=>{addIncoming();state.refresh=nativeBoard.render();});
           }
         };
         window.readNativeRefreshFixture=async()=>{
@@ -763,9 +729,13 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       view.contentEl.scrollTop=180;
       const scrollBefore=view.contentEl.scrollTop;
       const renderCallsBefore=rendered.length;
-      const lift=await carry(view,cardB,cardA,{release:false});
+      const transfer = new DataTransfer();
+      cardB.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+      cardA.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:transfer,clientY:0}));
       assert(cardA.classList.contains('jotdrop-drop-before'),'drag insertion marker');
-      await drop(view,cardB,lift);
+      cardA.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
+      await tick(); await tick();
+      cardB.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:transfer}));
       assert(await ordinary()==='B,A','real DOM drag/drop handlers persist order');
       assert(view.contentEl.scrollTop===scrollBefore,'drop preserves scroll position');
       assert(column.firstElementChild===cardB&&column.lastElementChild===cardA,'drop reuses and reorders existing DOM nodes');
@@ -803,13 +773,11 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       await settleLayout();
       assert(columns.map(names).join('|')==='0,4,7|1,3,6|2,5,8','card height changes automatically repack the board');
       assert(rendered.length===renderedBeforeResize&&writes.length===writesBeforeResize,'height reflow neither rerenders Markdown nor writes notes');
-      const heldLift=await carry(columnView,cardNodes.get(columnFiles[0].path),columns[2],{release:false});
-      assert(columnView.draggedPath===columnFiles[0].path&&heldLift,'pointer drag holds the card');
+      columnView.draggedPath=columnFiles[0].path;
       cardNodes.get(columnFiles[0].path).style.height='300px';
       await settleLayout();
       assert(columns.map(names).join('|')==='0,4,7|1,3,6|2,5,8','late height changes do not move targets during a drag');
-      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
-      assert(!columnView.draggedPath&&!document.querySelector('.jotdrop-drag-ghost'),'Escape cancels the drag and removes the floating card');
+      cardNodes.get(columnFiles[0].path).dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:new DataTransfer()}));
       await settleLayout();
       assert(columns.map(names).join('|')==='0,7|1,3,5,8|2,4,6','deferred compaction runs after the drag ends');
       cardNodes.get(columnFiles[0].path).style.height='120px';await settleLayout();
@@ -817,8 +785,13 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       const masonryScroll=columnView.contentEl.scrollTop;
       const beforeDenseDropWrites=writes.length;
       const untouchedBefore=[...columns[2].children].map(node=>({node,top:node.getBoundingClientRect().top,left:node.getBoundingClientRect().left}));
+      const dropTransfer=new DataTransfer();
       const dragged=cardNodes.get(columnFiles[0].path),dropTarget=cardNodes.get(columnFiles[3].path);
-      await carry(columnView,dragged,dropTarget,{after:true});
+      dragged.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dropTransfer}));
+      dropTarget.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:dropTransfer,clientY:dropTarget.getBoundingClientRect().bottom-1}));
+      dropTarget.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dropTransfer}));
+      await columnView.orderQueue;
+      dragged.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:dropTransfer}));
       await settleLayout();
       assert(cardNodes.get(columnFiles[0].path).previousElementSibling===cardNodes.get(columnFiles[3].path),'dropped card stays immediately after the chosen target in its column');
       assert(columns.map(names).join('|')==='4,7|1,3,0,6|2,5,8','drop changes only source and target stacks; unrelated cards retain columns');
@@ -876,12 +849,17 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       await emptyView.render();await settleLayout();
       const emptyColumns=[...emptyView.gridEl.querySelectorAll('.jotdrop-grid-col')];
       const emptySource=emptyView.gridEl.querySelector('.jotdrop-card');
-      const emptyLift=await carry(emptyView,emptySource,emptyColumns[2],{release:false});
-      assert(emptyLift.slot?.column===emptyColumns[2]&&!emptyLift.slot.target&&emptyColumns[2].classList.contains('jotdrop-column-drop'),'empty column accepts a dragged note without a target card');
+      const emptyTransfer=new DataTransfer();
+      emptySource.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:emptyTransfer}));
+      const emptyOver=new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:emptyTransfer});
+      emptyColumns[2].dispatchEvent(emptyOver);
+      assert(emptyOver.defaultPrevented,'empty column accepts a dragged note without a target card');
       assert(emptyColumns[2].getBoundingClientRect().height>=120,'empty column has a usable mouse drop area');
       const beforeEmptyWrites=writes.length;
       const hiddenEmptyRanks=emptyFiles.slice(1).map(file=>metadata.get(file).jotdrop_order);
-      await drop(emptyView,emptySource,emptyLift);await settleLayout();
+      emptyColumns[2].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:emptyTransfer}));
+      await emptyView.orderQueue;
+      emptySource.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:emptyTransfer}));await settleLayout();
       assert(emptySource.parentElement===emptyColumns[2]&&emptyPlugin.settings.cardLayout.columns[emptyFiles[0].path]===2,'drop into empty filtered column persists the chosen column');
       assert(writes.length===beforeEmptyWrites+1&&emptyFiles.slice(1).every((file,index)=>metadata.get(file).jotdrop_order===hiddenEmptyRanks[index]),'empty-column drop writes only the moved note and retains hidden ranks');
       assert(emptyFiles.slice(1).every(file=>emptyPlugin.settings.cardLayout.columns[file.path]===0),'empty-column drop retains hidden column assignments');
@@ -891,10 +869,15 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       emptyView.query='';await emptyView.render();await settleLayout();
       const pinnedEmpty=emptyView.gridEl.querySelector('.jotdrop-grid-inner[data-pinned="true"]').children[1];
       const crossSource=emptyView.gridEl.querySelector(`[data-path="${emptyFiles[0].path}"]`);
-      await carry(emptyView,crossSource,pinnedEmpty);await settleLayout();
+      const crossTransfer=new DataTransfer();
+      crossSource.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:crossTransfer}));
+      pinnedEmpty.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:crossTransfer}));await emptyView.orderQueue;
+      crossSource.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:crossTransfer}));await settleLayout();
       assert(metadata.get(emptyFiles[0]).pinned===true&&crossSource.parentElement===pinnedEmpty,'empty pinned column accepts an unpinned note and persists pin state');
       const beforeColumnNoOp=writes.length;
-      await carry(emptyView,crossSource,pinnedEmpty);
+      crossSource.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:crossTransfer}));
+      pinnedEmpty.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:crossTransfer}));await emptyView.orderQueue;
+      crossSource.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:crossTransfer}));
       assert(writes.length===beforeColumnNoOp,'drop into the current column with a single card writes nothing');
       window.createEmptyColumnMouseFixture=async(useTags=false)=>{
         document.body.replaceChildren();
@@ -1057,14 +1040,14 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         await page.waitForFunction(() => document.querySelector('[data-path="NativeRace/incoming.md"]'), null, { timeout: 5000 });
         const observed = await page.evaluate(() => window.readNativeRefreshFixture());
         const detail = `${mode}: ${JSON.stringify(observed)}`;
-        assert.deepEqual(observed.events, [{ type: 'pointerdown', trusted: true }, { type: 'finish', slot: mode !== 'cancel' }], `mouse drag completes during a ${detail}`);
+        assert.deepEqual(observed.events, mode === 'cancel' ? [{ type: 'dragend', trusted: true }] : [{ type: 'drop', trusted: true }, { type: 'dragend', trusted: true }], `native drag completes during a ${detail}`);
         if (mode !== 'cancel') assert.equal(observed.sourceAtDrop, true, `carried card stays mounted until drop: ${detail}`);
         assert(observed.incoming && observed.nodes === 7 && observed.unique === 7, `deferred refresh applies after the drag: ${detail}`);
         assert(observed.draggedPath === null && !observed.reordering, `drag state is released: ${detail}`);
         if (mode === 'cancel') assert(observed.column === undefined && observed.order === 0, `cancelled drag writes nothing: ${detail}`);
         else assert.equal(observed.column, 1, `dropped note keeps the chosen column: ${detail}`);
       }
-      console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks; 3 mouse drags with refreshes during the drag.`);
+      console.log(`PASS: ${result.checks} cross-column drag and in-flight refresh checks; 3 native drags with refreshes during the drag.`);
       return;
     }
     if (tagRenderOnly) {
@@ -1080,12 +1063,12 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     await page.setViewportSize({width:900,height:780});
     const createMouseFixture = async (useTags=false) => page.evaluate(async(useTags)=>{
       const fixture=await window.createEmptyColumnMouseFixture(useTags);
-      for(const type of ['pointerdown','pointerup']) document.addEventListener(type,event=>fixture.events.push({type:event.type,trusted:event.isTrusted}),true);
+      for(const type of ['dragstart','drop']) fixture.view.gridEl.addEventListener(type,event=>fixture.events.push({type:event.type,trusted:event.isTrusted}),true);
     },useTags);
     await createMouseFixture();
     await page.locator('.jotdrop-card').dragTo(page.locator('.jotdrop-grid-col').nth(2),{targetPosition:{x:40,y:40}});
     await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2);
-    assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'pointerdown',trusted:true},{type:'pointerup',trusted:true}]);
+    assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'dragstart',trusted:true},{type:'drop',trusted:true}]);
     assert.equal(await page.locator('.jotdrop-grid-col').nth(2).locator('.jotdrop-card').count(),1,'real mouse drag moves the card into the empty column');
     await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
     for (const area of ['gap', 'background']) {
@@ -1104,7 +1087,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       await page.locator('.jotdrop-card').dragTo(page.locator(point.selector),{targetPosition:{x:point.x,y:point.y}});
       await page.waitForFunction(()=>window.emptyColumnMouseFixture.plugin.settings.cardLayout.columns[window.emptyColumnMouseFixture.sourcePath]===2,{},{timeout:10000});
       await page.evaluate(()=>window.emptyColumnMouseFixture.view.orderQueue);
-      assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'pointerdown',trusted:true},{type:'pointerup',trusted:true}],`native ${area} drop reaches the plugin`);
+      assert.deepEqual(await page.evaluate(()=>window.emptyColumnMouseFixture.events),[{type:'dragstart',trusted:true},{type:'drop',trusted:true}],`native ${area} drop reaches the plugin`);
       assert.equal(await page.locator('.jotdrop-grid-col:visible').nth(2).locator('.jotdrop-card').count(),1,`${area} drop places one card in the nearest visible column after excluding tags`);
       assert.equal(await page.evaluate(()=>window.emptyColumnMouseFixture.view.draggedPath),null,`${area} drop finishes dragging`);
       await page.evaluate(async()=>{await window.emptyColumnMouseFixture.view.onClose();});
@@ -1115,8 +1098,8 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     await page.screenshot({ path: 'work/verification/tag-visibility-preview.png', fullPage: true });
     assert.equal(result.notices.some(message=>message.startsWith('JotDrop:')),false);
     console.log(`PASS: ${result.checks} browser integration checks (mock Obsidian services; real bundle, DOM and CSS).`);
-    console.log('PASS: real browser mouse drag into an empty column (trusted pointer events, no OS drag).');
-    console.log('PASS: mouse drops in column gaps and free grid background select the nearest column and finish.');
+    console.log('PASS: real browser mouse drag into an empty column (trusted dragstart and drop events).');
+    console.log('PASS: native drops in column gaps and free grid background select the nearest column and finish.');
     console.log('Preview: work/verification/modal-preview.png');
   } finally { await browser.close(); }
 })().catch(error=>{ console.error(error.message); process.exitCode=1; });
