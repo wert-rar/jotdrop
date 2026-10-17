@@ -1,7 +1,7 @@
 # PROJECTSTATUS
 
 ## Current goals
-- 2026-10-17 18:15: установлена 1bc2b3b — перенос карточек на pointer events вместо HTML5 drag-and-drop (системный цикл перетаскивания Windows держал окно Obsidian секундами; зависание воспроизвелось и на b1acced, то есть это не регрессия оптимизации). Пользователю: перезагрузить JotDrop и проверить перенос маленьких и больших (#Репетиторство) карточек, индикатор, позицию по верхнему краю, автопрокрутку, Esc.
+- 2026-10-17: ПОДТВЕРЖДЕНО пользователем в Obsidian — с 1bc2b3b (перенос на pointer events вместо HTML5 drag-and-drop) перенос быстрый, зависаний нет. Ветка codex/drag-filter-wip-20261016 не запушена; следующий шаг — решить о push/PR в main.
 - Включены 98dd3dc (слот по верхнему краю, индикатор стороны, отступ закреплённых +20 px) и 2087dd4 (анимация 80 мс). Временная трассировка 3baf80b откатана (e59498c); копия трассы: work/logs/drag-trace-3baf80b-2026-10-17.json.
 - Latest session report: [2026-10-17-1705](work-reports/2026-10-17-1705.md).
 
@@ -30,7 +30,7 @@
 - work-reports/2026-10-17-1554.md: локальная установка и проверка файлов.
 
 ## Testing and verification results
-- PASS 1bc2b3b: npm run build, полный check:fork (179 browser, 19 drag-refresh, 7 drag-window, реальные мышиные переносы Playwright), git diff --check. Стенд на реальных текстах Grail: 8 переносов, попадание в колонку, long tasks нет. Логи: work/logs/pointer-build.log, pointer-check.log. Установка: work/logs/install-pointer-drag-2026-10-17-1815.log, SHA256 совпадают, data.json не изменился. Живой Obsidian агентом NOT RUN.
+- PASS 1bc2b3b: npm run build, полный check:fork (179 browser, 19 drag-refresh, 7 drag-window, реальные мышиные переносы Playwright), git diff --check. Стенд на реальных текстах Grail: 8 переносов, попадание в колонку, long tasks нет. Логи: work/logs/pointer-build.log, pointer-check.log. Установка: work/logs/install-pointer-drag-2026-10-17-1815.log, SHA256 совпадают, data.json не изменился. Пользователь подтвердил в живом Obsidian: перенос быстрый, зависаний нет. Touch/Android NOT RUN.
 - PASS 98dd3dc: npm run build, полный check:fork (drag-refresh 14 проверок, новая регрессия высокой карточки RED на старом коде: work/logs/slot-red.log). Логи: work/logs/slot-build.log, slot-check.log.
 - PASS установка 3baf80b: deploy:local, SHA256 трёх assets совпадают, data.json не изменился. Бэкап: work/backups/jotdrop-before-slot-trace-2026-10-17-1742. Лог: work/logs/install-slot-trace-2026-10-17-1742.log. Трассировка в живом Obsidian не проверялась.
 - PASS при установке 2087dd4: deploy:local (verify:deploy и gated build); SHA256 main.js/manifest.json/styles.css совпадают со сборкой; data.json не изменился. Бэкап: work/backups/jotdrop-before-anim80-2026-10-17-1724. Лог: work/logs/install-anim80-2026-10-17-1724.log.
@@ -44,7 +44,6 @@
 
 ## Known issues
 - Бэкап work/backups/jotdrop-before-optimization-2026-10-17-1552 НЕ является сборкой b1acced (main.js и styles.css отличаются от чистой сборки b1acced); это сборка, установленная в 14:58.
-- Зависание 3–4 с при переносе (и лаг больших карточек) воспроизводилось на нативном drag-and-drop, включая b1acced; устранение pointer-переносом ещё не подтверждено пользователем в Obsidian.
 - В Grail есть файлы sync-conflict от Syncthing (14:55) — они тоже отображаются на доске.
 - Причина жалобы на залипание/лаги drag в 31178a7 (до 17:00 2026-10-17) не установлена; симптом не воспроизводится в стенде и, по словам пользователя, пропал.
 - Первое открытие по-прежнему последовательно читает все заметки; скрытые загруженные карточки удерживаются до перестройки/закрытия. Утечка не установлена.
