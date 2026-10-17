@@ -32,6 +32,14 @@ implementation or release work.
 15. Plugin release tags must exactly match `manifest.json` without a `v` prefix.
     Android release tags must exactly match `v<versionName>`. Run
     `npm run verify:tag -- <tag>` before pushing any release tag.
+16. Obsidian loads plugin code only at startup. After `deploy:local` (or any
+    copy into a vault), tell the user to restart Obsidian or turn JotDrop off
+    and on in Settings → Community plugins, and confirm they did before
+    interpreting any feedback. A complaint about an installed build without
+    that reload is evidence about the previous build, not the new one. On
+    2026-10-17 a drag-lag report about f499f43 came from the old b1acced still
+    loaded in memory (the user reports this happened before as well); see
+    `DRAG_FILTER_PROBLEM.md`.
 
 The canonical source is `https://github.com/wert-rar/jotdrop.git` at
 `origin/main`. The upstream is `https://github.com/Diexar-Labs/jotdrop.git`.
