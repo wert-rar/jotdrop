@@ -305,12 +305,40 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       return false;
     });
   };
+  // Drops are applied (ranks, DOM, layout) in order and at once; their file
+  // writes run in a separate chain, so a drop never waits for earlier saves.
+  // The returned promise settles when this move has been saved.
   View.prototype.moveCard = function (sourcePath, targetPath, after, columnTarget) {
-    const execute = () => this.performCardMove(sourcePath, targetPath, after, columnTarget);
-    const operation = this.orderQueue ? this.orderQueue.then(execute, execute) : execute();
-    this.orderQueue = operation;
-    return operation;
+    const apply = () => this.applyCardMove(sourcePath, targetPath, after, columnTarget);
+    const applied = this.applyQueue ? this.applyQueue.then(apply, apply) : apply();
+    const settled = () => { if (this.applyQueue === tracked) this.applyQueue = null; };
+    const tracked = this.applyQueue = applied.then(settled, settled);
+    const saved = applied.then(plan => {
+      if (!plan) return this.saveQueue?.then(() => {}, () => {});
+      const save = () => this.saveCardMove(plan);
+      return this.saveQueue = this.saveQueue ? this.saveQueue.then(save, save) : save();
+    });
+    this.orderQueue = saved;
+    return saved;
   };
+  // New ranks for the dropped card at `index` and, only where its neighbours
+  // leave no room (unranked, tied or exhausted ranks), for the fewest adjacent
+  // cards. The group is in rank order, so values strictly between the bounds
+  // keep every other card in place; invalid ranks elsewhere stay untouched.
+  function rankWindow(group, index) {
+    let first = index, last = index;
+    for (;;) {
+      const lo = first ? group[first - 1].order : -Infinity;
+      if (first && !Number.isFinite(lo)) { first--; continue; }
+      const hi = last < group.length - 1 && Number.isFinite(group[last + 1].order) ? group[last + 1].order : Infinity;
+      const count = last - first + 1;
+      const values = Array.from({ length: count }, (_, i) =>
+        lo === -Infinity ? (hi === Infinity ? i * 1024 : hi - (count - i) * 1024)
+        : hi === Infinity ? lo + (i + 1) * 1024 : lo + (hi - lo) * (i + 1) / (count + 1));
+      if (values.every((value, i) => value > (i ? values[i - 1] : lo) && value < hi)) return { first, values };
+      if (last < group.length - 1) last++; else first--;
+    }
+  }
   // Keep the current compact stacks when dropping: the chosen column outranks
   // global height balancing. Save one layout snapshot, not every note's metadata.
   View.prototype.captureCardPlacement = function (sourcePath, targetPath, after, columnTarget) {
@@ -336,14 +364,19 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       unchanged:source && (columnTarget ? source.parentElement===destination && destination.lastElementChild===source : after ? target.nextElementSibling===source : target.previousElementSibling===source)
     };
   };
-  View.prototype.performCardMove = async function (sourcePath, targetPath, after, columnTarget) {
-    if (sourcePath === targetPath) return;
+  // Applies a drop to the ranks, the DOM and the layout without waiting for any
+  // save, and returns the writes it needs, or null when nothing changes.
+  View.prototype.applyCardMove = async function (sourcePath, targetPath, after, columnTarget) {
+    if (sourcePath === targetPath) return null;
     // A refresh already awaiting file reads must not replace the dragged DOM.
     if (this.cardRead) this.renderPending = true;
     this.renderRequest++;
+    // Board refreshes stay deferred until every pending move has been saved.
+    this.pendingMoves = (this.pendingMoves || 0) + 1;
     this.reordering = true;
     const previousLayout=this.plugin.settings.cardLayout;
     const previousSort=this.plugin.settings.sortMode;
+    let plan = null;
     try {
       const cards = this.orderCards || await this.collectCards();
       this.orderCards = cards;
@@ -351,7 +384,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       const target = cards.find(card => card.file.path === targetPath);
       const placement=this.captureCardPlacement(sourcePath,targetPath,after,columnTarget);
       if (!source || (!target && !columnTarget) || (columnTarget && !placement)) throw new Error('A dragged note has moved or disappeared. Refresh the board.');
-      if (placement?.unchanged) return;
+      if (placement?.unchanged) return null;
       const pinned = columnTarget ? columnTarget.pinned : target.meta.pinned;
       const group = cards.filter(card => card !== source && card.meta.pinned === pinned);
       const mounted = new Set([...this.gridEl.querySelectorAll('.jotdrop-card')].map(node => node.dataset.path));
@@ -362,16 +395,17 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
         : group.findLastIndex(card => mounted.has(card.file.path)) + 1;
       group.splice(insertion, 0, source);
       const previousGroup = cards.filter(card=>card.meta.pinned===pinned);
-      if (!placement && group.length===previousGroup.length && group.every((card,index)=>card===previousGroup[index])) return;
-      const index = group.indexOf(source);
-      const left = index ? group[index-1].order : null;
-      const right = index < group.length-1 ? group[index+1].order : null;
-      const order = left === null && right === null ? 0 : left === null ? right - 1024 : right === null ? left + 1024 : left + (right-left)/2;
-      const ranksValid = group.filter(card=>card!==source).every((card,index,array)=>Number.isFinite(card.order) && (!index || card.order>array[index-1].order));
-      const sparse = ranksValid && Number.isFinite(order) && (left===null || order>left) && (right===null || order<right);
-      const changed = sparse ? [source] : group;
-      if (sparse) source.order = order;
-      else group.forEach((card,index)=>{card.order=index*1024;});
+      if (!placement && group.length===previousGroup.length && group.every((card,index)=>card===previousGroup[index])) return null;
+      let changed;
+      if (previousSort === 'manual') {
+        const { first, values } = rankWindow(group, group.indexOf(source));
+        changed = group.slice(first, first + values.length);
+        changed.forEach((card, index) => { card.order = values[index]; });
+      } else {
+        // Another sort mode chose the shown order; the ranks must adopt all of it.
+        changed = group;
+        group.forEach((card,index)=>{card.order=index*1024;});
+      }
       source.meta.pinned = pinned;
       cards.sort((a,b)=>a.order-b.order);
       this.lastFiltered = cards.filter(card=>this.matchesFilters(card));
@@ -379,21 +413,14 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       this.plugin.settings.sortMode='manual';
       this.updateSortControl();
       this.reflowCards(true);
-      for (const card of changed) {
-        this.plugin.suppressModifyOnce(card.file.path);
-        try {
-          await this.app.fileManager.processFrontMatter(card.file, frontmatter => {
-            frontmatter.jotdrop_order = card.order;
-            if (card === source) frontmatter.pinned = pinned;
-          });
-        } catch (error) {
-          this.plugin.suppressedPaths.delete(card.file.path);
-          throw error;
-        }
-      }
-      if (placement || previousSort !== 'manual') await this.plugin.saveSettings();
+      this.moveSerial = (this.moveSerial || 0) + 1;
+      plan = {
+        writes: changed.map(card => ({ card, order: card.order, pinned: card === source ? pinned : undefined })),
+        saveSettings: !!placement || previousSort !== 'manual',
+        previousLayout, previousSort, serial: this.moveSerial,
+      };
+      return plan;
     } catch (error) {
-      // Reload authoritative files after a failed write, undoing the optimistic DOM move.
       this.plugin.settings.cardLayout=previousLayout;
       this.plugin.settings.sortMode=previousSort;
       if (this.orderCards) this.invalidateCards({kind:'files',paths:this.orderCards.map(card=>card.file.path)});
@@ -401,9 +428,43 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       this.renderPending = true;
       throw error;
     } finally {
-      this.reordering = false;
-      if (this.renderPending) { this.renderPending = false; await this.render(); }
+      if (!plan) await this.finishCardMove();
     }
+  };
+  View.prototype.saveCardMove = async function (plan) {
+    try {
+      for (const { card, order, pinned } of plan.writes) {
+        this.plugin.suppressModifyOnce(card.file.path);
+        try {
+          await this.app.fileManager.processFrontMatter(card.file, frontmatter => {
+            frontmatter.jotdrop_order = order;
+            if (pinned !== undefined) frontmatter.pinned = pinned;
+          });
+        } catch (error) {
+          this.plugin.suppressedPaths.delete(card.file.path);
+          throw error;
+        }
+      }
+      if (plan.saveSettings) await this.plugin.saveSettings();
+    } catch (error) {
+      // Reload authoritative files after a failed write, undoing the optimistic DOM move.
+      // A later drop has already set its own layout and sort mode; those are kept.
+      if (plan.serial === this.moveSerial) {
+        this.plugin.settings.cardLayout=plan.previousLayout;
+        this.plugin.settings.sortMode=plan.previousSort;
+      }
+      if (this.orderCards) this.invalidateCards({kind:'files',paths:this.orderCards.map(card=>card.file.path)});
+      this.orderCards = null;
+      this.renderPending = true;
+      throw error;
+    } finally {
+      await this.finishCardMove();
+    }
+  };
+  View.prototype.finishCardMove = async function () {
+    if (--this.pendingMoves) return;
+    this.reordering = false;
+    if (this.renderPending) { this.renderPending = false; await this.render(); }
   };
   View.prototype.reflowCards = function (animate = false) {
     if (this.preserveCardColumns && !animate) return;
@@ -640,7 +701,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       card.classList.remove('is-dragging');
       this.markDropSlot(null);
       if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
-      // A drop hands the deferred refresh to performCardMove; a cancelled drag runs it here.
+      // A drop hands the deferred refresh to its save; a cancelled drag runs it here.
       if (this.renderPending && !this.reordering) { this.renderPending=false; void this.render().catch(reportError); }
     });
   };

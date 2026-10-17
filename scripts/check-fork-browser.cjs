@@ -699,6 +699,48 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       assert(plugin.suppressedPaths.size===0,'write failures clear modification suppression');
       view.query='';
 
+      // A move ranks only the dragged note, plus the neighbours that leave it no
+      // room; invalid ranks elsewhere in the group are left alone.
+      const rankFiles=Array.from({length:8},(_,index)=>({path:`RankFixture/${index}.md`,name:`${index}.md`,basename:String(index),stat:{ctime:100-index,mtime:100-index}}));
+      files.push(...rankFiles);
+      const rankOrders=[0,1024,2048,3072,4096,4096,undefined,undefined];
+      rankFiles.forEach((file,index)=>{metadata.set(file,{pinned:false,tags:[],...(rankOrders[index]===undefined?{}:{jotdrop_order:rankOrders[index]})});text.set(file,`# ${index}`);});
+      const rankPlugin={...plugin,settings:{...plugin.settings,notesFolder:'RankFixture',archiveFolder:'RankFixture/Archive',sortMode:'manual'}};
+      const rankView=makeView(rankPlugin);
+      const rankNames=async()=>(await makeView(rankPlugin).collectCards()).map(card=>card.file.basename).join(',');
+      assert(await rankNames()==='0,1,2,3,4,5,6,7','rank fixture starts in rank order with a duplicate and two unranked notes');
+      let rankWrites=writes.length;
+      await rankView.moveCard(rankFiles[1].path,rankFiles[2].path,true);
+      assert(writes.length-rankWrites===1,`a move between free neighbours writes only the dragged note despite invalid ranks elsewhere (${writes.length-rankWrites} writes)`);
+      assert(await rankNames()==='0,2,1,3,4,5,6,7','the single-note move is saved in the requested place');
+      rankWrites=writes.length;
+      await rankView.moveCard(rankFiles[3].path,rankFiles[4].path,true);
+      assert(writes.length-rankWrites===2,`a move between equal ranks rewrites only the dragged note and the tied neighbour (${writes.length-rankWrites} writes)`);
+      assert(await rankNames()==='0,2,1,4,3,5,6,7','the move between equal ranks is saved in the requested place');
+      rankWrites=writes.length;
+      await rankView.moveCard(rankFiles[0].path,rankFiles[6].path,true);
+      assert(writes.length-rankWrites===2,`a move past an unranked note ranks only that note and the dragged note (${writes.length-rankWrites} writes)`);
+      assert(await rankNames()==='2,1,4,3,5,6,0,7','the move past an unranked note is saved in the requested place');
+
+      // Saving a drop must not hold the next drop: it is applied at once.
+      const ungatedWrite=app.fileManager.processFrontMatter;
+      let releaseRankWrite,rankWriteEntered;
+      const rankWriteStarted=new Promise(resolve=>{rankWriteEntered=resolve;});
+      const rankGate=new Promise(resolve=>{releaseRankWrite=resolve;});
+      app.fileManager.processFrontMatter=async(file,callback)=>{rankWriteEntered();await rankGate;return ungatedWrite(file,callback);};
+      const firstRankMove=rankView.moveCard(rankFiles[2].path,rankFiles[0].path,false);
+      await rankWriteStarted;
+      const secondRankMove=rankView.moveCard(rankFiles[7].path,rankFiles[0].path,false);
+      await tick();
+      const appliedWhileSaving=rankView.orderCards.map(card=>card.file.basename).join(',');
+      const lockedWhileSaving=!!rankView.reordering;
+      releaseRankWrite();
+      await Promise.all([firstRankMove,secondRankMove]);
+      app.fileManager.processFrontMatter=ungatedWrite;
+      assert(appliedWhileSaving==='1,4,3,5,6,2,7,0',`a second drop is applied while the first drop is still saving (${appliedWhileSaving})`);
+      assert(lockedWhileSaving&&!rankView.reordering,'board refreshes stay deferred until every pending save has finished');
+      assert(await rankNames()==='1,4,3,5,6,2,7,0','both drops are saved in order');
+
       const grid = view.contentEl.createDiv();
       view.gridEl = grid;
       const inner=grid.createDiv({cls:'jotdrop-grid-inner'});
