@@ -457,7 +457,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     if (animate && !this.contentEl.ownerDocument.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       for (const [node,before] of positions) {
         const after=node.getBoundingClientRect();
-        if ((before.x!==after.x || before.y!==after.y) && after.bottom>0 && after.top<this.contentEl.ownerDocument.defaultView.innerHeight) node.jotdropReflowAnimation=node.animate([{transform:`translate(${before.x-after.x}px,${before.y-after.y}px)`},{transform:'translate(0,0)'}],{duration:160,easing:'ease-out'});
+        if ((before.x!==after.x || before.y!==after.y) && after.bottom>0 && after.top<this.contentEl.ownerDocument.defaultView.innerHeight) node.jotdropReflowAnimation=node.animate([{transform:`translate(${before.x-after.x}px,${before.y-after.y}px)`},{transform:'translate(0,0)'}],{duration:80,easing:'ease-out'});
       }
     }
   };
