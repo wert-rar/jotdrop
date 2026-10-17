@@ -530,41 +530,136 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     element?.classList.add(cls);
     this.dropMarker = element ? { element, cls } : null;
   };
-  View.prototype.registerColumnDrops = function () {
-    const grid = this.gridEl;
-    if (grid.jotdropDropRegistered) return;
-    grid.jotdropDropRegistered = true;
-    grid.addEventListener('dragover', event => {
-      if (!this.draggedPath || this.selectionMode) return;
-      const slot = this.dropSlotAt(event);
-      if (!slot) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      this.dropSlot = slot;
-      this.markDropSlot(slot);
-    });
-    grid.addEventListener('dragleave', event => {
-      if (event.relatedTarget && grid.contains(event.relatedTarget)) return;
-      this.dropSlot = null;
-      this.markDropSlot(null);
-    });
-    grid.addEventListener('drop', run(async event => {
-      // Drop exactly where the marker was shown during the last dragover.
-      const slot = this.dropSlot?.column.isConnected ? this.dropSlot : this.dropSlotAt(event);
-      this.dropSlot = null;
-      this.markDropSlot(null);
-      if (this.selectionMode || !slot) return;
-      const source = event.dataTransfer.getData('application/x-jotdrop-note');
-      if (!source || source !== this.draggedPath) return;
-      event.stopPropagation();
-      const columns = slot.column.parentElement;
-      if (slot.target) await this.moveCard(source, slot.target.dataset.path, slot.after);
-      else await this.moveCard(source, null, false, {pinned:columns.dataset.pinned==='true',index:[...columns.children].indexOf(slot.column),count:columns.children.length});
-    }));
+  // Cards move with pointer events, not HTML5 drag and drop: on Windows the
+  // native drag runs an OS modal loop that held Obsidian for seconds per drop.
+  const DRAG_THRESHOLD_PX = 10; // Matches the long-press cancel distance.
+  const AUTO_SCROLL_EDGE_PX = 56;
+  View.prototype.beginCardPress = function (event, card, data) {
+    if (event.button !== 0 || event.pointerType === 'touch' || this.selectionMode || this.cardDrag) return;
+    if (event.target.closest('a, input, button, textarea, select, summary, [contenteditable="true"], .jotdrop-card-actions')) return;
+    const doc = card.ownerDocument, win = doc.defaultView;
+    const { pointerId, clientX: startX, clientY: startY } = event;
+    let dragging = false;
+    const stop = () => {
+      doc.removeEventListener('pointermove', move, true);
+      doc.removeEventListener('pointerup', up, true);
+      doc.removeEventListener('pointercancel', cancel, true);
+      doc.removeEventListener('keydown', key, true);
+      win.removeEventListener('blur', cancel);
+    };
+    const move = moved => {
+      if (moved.pointerId !== pointerId) return;
+      if (!dragging) {
+        if (Math.abs(moved.clientX - startX) <= DRAG_THRESHOLD_PX && Math.abs(moved.clientY - startY) <= DRAG_THRESHOLD_PX) return;
+        if (!card.isConnected || this.selectionMode) { stop(); return; }
+        dragging = true;
+        this.startCardDrag(card, data, startX, startY);
+      }
+      moved.preventDefault();
+      this.updateCardDrag(moved.clientX, moved.clientY);
+    };
+    const up = released => {
+      if (released.pointerId !== pointerId) return;
+      stop();
+      if (!dragging) return;
+      this.updateCardDrag(released.clientX, released.clientY);
+      void this.finishCardDrag(true).catch(reportError);
+    };
+    const cancel = () => {
+      stop();
+      if (dragging) void this.finishCardDrag(false).catch(reportError);
+    };
+    const key = pressed => {
+      if (pressed.key !== 'Escape' || !dragging) return;
+      pressed.preventDefault();
+      pressed.stopPropagation();
+      cancel();
+    };
+    doc.addEventListener('pointermove', move, true);
+    doc.addEventListener('pointerup', up, true);
+    doc.addEventListener('pointercancel', cancel, true);
+    doc.addEventListener('keydown', key, true);
+    win.addEventListener('blur', cancel);
+  };
+  View.prototype.startCardDrag = function (card, data, x, y) {
+    const doc = card.ownerDocument;
+    const rect = card.getBoundingClientRect();
+    this.draggedPath = data.file.path;
+    this.dragGrabOffset = Math.min(Math.max(y - rect.top, 0), rect.height);
+    this.dropSlot = null;
+    // A refresh already awaiting file reads is replayed after the drag ends.
+    if (this.cardRead) this.renderPending = true;
+    this.renderRequest++;
+    const ghost = card.cloneNode(true);
+    ghost.removeAttribute('data-path');
+    ghost.classList.remove('is-dragging', 'jotdrop-drop-before', 'jotdrop-drop-after');
+    ghost.classList.add('jotdrop-drag-ghost');
+    ghost.setAttribute('aria-hidden', 'true');
+    Object.assign(ghost.style, { width: `${rect.width}px`, height: `${rect.height}px` });
+    doc.body.appendChild(ghost);
+    card.classList.add('is-dragging');
+    doc.body.classList.add('jotdrop-is-card-dragging');
+    doc.getSelection()?.removeAllRanges();
+    this.cardDrag = { card, ghost, grabX: x - rect.left, x, y, scroll: 0, frame: null };
+  };
+  View.prototype.updateCardDrag = function (x, y) {
+    const drag = this.cardDrag;
+    if (!drag) return;
+    drag.x = x; drag.y = y;
+    drag.ghost.style.transform = `translate3d(${x - drag.grabX}px, ${y - this.dragGrabOffset}px, 0)`;
+    const doc = this.contentEl.ownerDocument, win = doc.defaultView;
+    const view = this.contentEl.getBoundingClientRect();
+    const horizontal = x >= view.left && x <= view.right;
+    const under = horizontal && y >= view.top && y <= view.bottom ? doc.elementFromPoint(x, y) : null;
+    const onBoard = under && this.contentEl.contains(under) && !under.closest('.jotdrop-toolbar, .jotdrop-filter-bar');
+    const slot = onBoard ? this.dropSlotAt({ clientX: x, clientY: y, target: under }) : null;
+    this.dropSlot = slot;
+    this.markDropSlot(slot);
+    // Scroll the board while the pointer rests near its top or bottom edge.
+    const depth = !horizontal ? 0 : y < view.top + AUTO_SCROLL_EDGE_PX ? y - view.top - AUTO_SCROLL_EDGE_PX
+      : y > view.bottom - AUTO_SCROLL_EDGE_PX ? y - view.bottom + AUTO_SCROLL_EDGE_PX : 0;
+    drag.scroll = Math.max(-24, Math.min(24, Math.round(depth * 0.4)));
+    if (drag.scroll && drag.frame == null) {
+      drag.frame = win.requestAnimationFrame(() => {
+        drag.frame = null;
+        if (this.cardDrag !== drag || !drag.scroll) return;
+        const before = this.contentEl.scrollTop;
+        this.contentEl.scrollTop += drag.scroll;
+        if (this.contentEl.scrollTop !== before) this.updateCardDrag(drag.x, drag.y);
+      });
+    }
+  };
+  View.prototype.finishCardDrag = async function (commit) {
+    const drag = this.cardDrag;
+    if (!drag) return;
+    const doc = drag.card.ownerDocument, win = doc.defaultView;
+    if (drag.frame != null) win.cancelAnimationFrame(drag.frame);
+    this.cardDrag = null;
+    drag.ghost.remove();
+    drag.card.classList.remove('is-dragging');
+    doc.body.classList.remove('jotdrop-is-card-dragging');
+    const slot = commit && this.dropSlot?.column.isConnected ? this.dropSlot : null;
+    const source = this.draggedPath;
+    this.dropSlot = null;
+    this.markDropSlot(null);
+    this.draggedPath = null;
+    // The release would otherwise click the card under the pointer and open it.
+    const swallow = clicked => { clicked.preventDefault(); clicked.stopPropagation(); };
+    doc.addEventListener('click', swallow, true);
+    win.setTimeout(() => doc.removeEventListener('click', swallow, true), 0);
+    if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
+    if (!slot) {
+      // A cancelled drag replays the refresh deferred while the card was carried.
+      if (this.renderPending && !this.reordering) { this.renderPending=false; await this.render(); }
+      return;
+    }
+    const columns = slot.column.parentElement;
+    if (slot.target) await this.moveCard(source, slot.target.dataset.path, slot.after);
+    else await this.moveCard(source, null, false, {pinned:columns.dataset.pinned==='true',index:[...columns.children].indexOf(slot.column),count:columns.children.length});
   };
   const render = View.prototype.render;
   View.prototype.render = async function (...args) {
-    // Rebuilding the grid would detach the carried card and stall the native drag.
+    // Rebuilding the grid would replace the carried card and its drop targets.
     if (this.reordering || this.draggedPath) { this.renderPending=true; return; }
     return render.apply(this, args);
   };
@@ -587,6 +682,13 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
   const closeView = View.prototype.onClose;
   View.prototype.onClose = async function () {
     this.stopMasonryObservation();
+    // Closing mid-drag must not leave the floating card behind.
+    if (this.cardDrag) {
+      this.cardDrag.ghost.remove();
+      this.cardDrag.card.ownerDocument.body.classList.remove('jotdrop-is-card-dragging');
+      this.cardDrag = null;
+      this.draggedPath = null;
+    }
     this.masonryObserver=null;
     clearMarkdown(this);
     return closeView.call(this);
@@ -618,30 +720,9 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
     card.jotdropData=data;
     this.observeCardSize(card);
     parent.parentElement.dataset.pinned=String(data.meta.pinned);
-    this.registerColumnDrops(parent.parentElement);
-    card.draggable = !this.selectionMode;
-    card.addEventListener('dragstart', event => {
-      if (this.selectionMode || event.target.closest('a, input, button')) { event.preventDefault(); return; }
-      this.draggedPath = data.file.path;
-      // The drag image keeps the grab point; slots follow the card's top edge.
-      const rect = card.getBoundingClientRect();
-      this.dragGrabOffset = Math.min(Math.max(event.clientY - rect.top, 0), rect.height);
-      this.dropSlot = null;
-      // A refresh already awaiting file reads is replayed after the drag ends.
-      if (this.cardRead) this.renderPending = true;
-      this.renderRequest++;
-      event.dataTransfer.setData('application/x-jotdrop-note', data.file.path);
-      event.dataTransfer.effectAllowed = 'move';
-      card.classList.add('is-dragging');
-    });
-    card.addEventListener('dragend', () => {
-      this.draggedPath = null;
-      this.dropSlot = null;
-      card.classList.remove('is-dragging');
-      this.markDropSlot(null);
-      if (this.masonryDeferred) { this.masonryDeferred=false; this.scheduleMasonryLayout(); }
-      // A drop hands the deferred refresh to performCardMove; a cancelled drag runs it here.
-      if (this.renderPending && !this.reordering) { this.renderPending=false; void this.render().catch(reportError); }
-    });
+    card.draggable = false;
+    // Images and links inside a card must not start an OS drag either.
+    card.addEventListener('dragstart', event => event.preventDefault());
+    card.addEventListener('pointerdown', event => this.beginCardPress(event, card, data));
   };
 }

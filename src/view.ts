@@ -118,7 +118,6 @@ export class JotDropView extends ItemView {
   declare decorateCard: (card: CardData, metadataOnly: boolean) => void;
   declare releaseCardMarkdown: (cards: HTMLElement[]) => void;
   declare observeCardSize: (card: HTMLElement) => void;
-  declare registerColumnDrops: (inner: HTMLElement) => void;
   plugin: JotDropPlugin;
   private gridEl!: HTMLElement;
   private searchEl!: HTMLInputElement;
@@ -899,12 +898,10 @@ export class JotDropView extends ItemView {
       const savedColumn = layout?.columnCount === columnCount ? layout.columns[c.file.path] : undefined;
       if (savedColumn !== undefined) column = column.parentElement!.children[savedColumn] as HTMLElement;
       column.parentElement!.dataset.pinned = String(c.meta.pinned);
-      this.registerColumnDrops(column.parentElement!);
       const retained = previous.get(c.file.path);
       if (retained && retained.data === c && !this.resetCardElements) {
         column.appendChild(retained.element);
         this.applyCardSelectionVisual(retained.element, this.selectedPaths.has(c.file.path));
-        retained.element.draggable = !this.selectionMode;
         this.observeCardSize(retained.element);
         previous.delete(c.file.path);
       } else {
