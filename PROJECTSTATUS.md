@@ -1,12 +1,8 @@
 # PROJECTSTATUS
 
 ## Current goals
-- 2026-10-17 18:01: ДЛЯ ДИФФЕРЕНЦИАЛЬНОЙ ПРОВЕРКИ в Obsidian временно установлен b1acced (собран из detached worktree, deploy:local, SHA256 совпадают, data.json не изменился). Пользователь проверяет, зависает ли перенос на нём. Если зависает — причина в окружении (Syncthing, большие заметки, Obsidian/Windows), иначе — в изменениях после b1acced. После проверки вернуть актуальную сборку ветки (без [DEBUG-dragtrace]). Бэкап 3baf80b: work/backups/jotdrop-before-b1acced-test-2026-10-17-1801.
-- Трасса 3baf80b (work/logs/drag-trace-3baf80b-2026-10-17.json): 10 переносов, плагин 50–70 мс на бросок, long tasks нет (макс. 115 мс), разрывов dragover >70 мс нет; в одном переносе drop пришёл через 4057 мс после dragstart при непрерывных dragover. Причина зависания НЕ установлена.
-- 2026-10-17 17:42: установлена сборка 3baf80b = исправления 98dd3dc + ВРЕМЕННАЯ трассировка [DEBUG-dragtrace]. Ждём, пока пользователь воспроизведёт зависание 3–4 с при переносе (и лаг больших карточек), затем читаем .obsidian/plugins/jotdrop/drag-trace.json, ищем причину и откатываем коммит 3baf80b.
-- 98dd3dc: слот броска выбирается по верхнему краю переносимой карточки (одним обработчиком на сетку); возвращён CSS индикатора (удалён в 964f747); отступ между закреплёнными и остальными +20 px.
-- Оптимизированная сборка 31178a7 установлена локально. Перезагрузить JotDrop в Obsidian и проверить работу и настройки.
-- 2026-10-17 17:05: жалоба на залипание drag в 31178a7 не воспроизведена сравнительным стендом (b1acced vs HEAD с событиями main.ts); пользователь подтвердил, что сейчас перенос работает. По просьбе пользователя анимация сдвига карточек после drop сокращена со 160 до 80 мс (src/customizations.js, reflowCards); остальные задержки не менялись. Закоммичено (2087dd4) и установлено через deploy:local в 17:24; нужно перезагрузить JotDrop в Obsidian.
+- 2026-10-17 18:15: установлена 1bc2b3b — перенос карточек на pointer events вместо HTML5 drag-and-drop (системный цикл перетаскивания Windows держал окно Obsidian секундами; зависание воспроизвелось и на b1acced, то есть это не регрессия оптимизации). Пользователю: перезагрузить JotDrop и проверить перенос маленьких и больших (#Репетиторство) карточек, индикатор, позицию по верхнему краю, автопрокрутку, Esc.
+- Включены 98dd3dc (слот по верхнему краю, индикатор стороны, отступ закреплённых +20 px) и 2087dd4 (анимация 80 мс). Временная трассировка 3baf80b откатана (e59498c); копия трассы: work/logs/drag-trace-3baf80b-2026-10-17.json.
 - Latest session report: [2026-10-17-1705](work-reports/2026-10-17-1705.md).
 
 ## Completed tasks still relevant to the current phase
@@ -22,8 +18,9 @@
 - Кэш данных — на представление; общий cardsVersion защищает принятие результатов. Инвалидация передаётся сразу, обновления объединяются с задержкой 150 мс.
 - Причины обновления: files, metadata, layout, assets, all. Формат настроек не изменён.
 - Виртуализация и параллельное чтение отложены по выбору пользователя до реальных измерений.
-- Установленный источник: 31178a734a66303d0da68350ebc47f92d9c27721, на базе live origin/main b1accedbdde4e3916c0656326a56a5e577e7c048. Установка выполнена из чистого коммита, без push или релизного тега.
-- Плагин: C:/Users/zhigu/GitHub/Obsidian/.obsidian/plugins/jotdrop, manifest 0.20.5. Backup прежних assets: work/backups/jotdrop-before-optimization-2026-10-17-1552.
+- Установленный источник: 1bc2b3b на ветке codex/drag-filter-wip-20261016, на базе live origin/main b1accedbdde4e3916c0656326a56a5e577e7c048. Установка из чистого коммита через deploy:local, без push и релизного тега.
+- Плагин: C:/Users/zhigu/GitHub/Obsidian/.obsidian/plugins/jotdrop, manifest 0.20.5. Бэкап перед 1bc2b3b (там стоял b1acced): work/backups/jotdrop-before-pointer-drag-2026-10-17-1815.
+- Перенос карточек: pointer events (мышь/перо), порог 10 px = порог отмены долгого нажатия; touch по-прежнему прокручивает и выделяет долгим нажатием. Нативный draggable отключён, dragstart внутри карточки отменяется.
 
 ## Main files changed
 - src/main.ts, src/view.ts, src/customizations.js: события, адресный кэш, DOM и жизненный цикл Markdown-компонентов.
@@ -33,6 +30,7 @@
 - work-reports/2026-10-17-1554.md: локальная установка и проверка файлов.
 
 ## Testing and verification results
+- PASS 1bc2b3b: npm run build, полный check:fork (179 browser, 19 drag-refresh, 7 drag-window, реальные мышиные переносы Playwright), git diff --check. Стенд на реальных текстах Grail: 8 переносов, попадание в колонку, long tasks нет. Логи: work/logs/pointer-build.log, pointer-check.log. Установка: work/logs/install-pointer-drag-2026-10-17-1815.log, SHA256 совпадают, data.json не изменился. Живой Obsidian агентом NOT RUN.
 - PASS 98dd3dc: npm run build, полный check:fork (drag-refresh 14 проверок, новая регрессия высокой карточки RED на старом коде: work/logs/slot-red.log). Логи: work/logs/slot-build.log, slot-check.log.
 - PASS установка 3baf80b: deploy:local, SHA256 трёх assets совпадают, data.json не изменился. Бэкап: work/backups/jotdrop-before-slot-trace-2026-10-17-1742. Лог: work/logs/install-slot-trace-2026-10-17-1742.log. Трассировка в живом Obsidian не проверялась.
 - PASS при установке 2087dd4: deploy:local (verify:deploy и gated build); SHA256 main.js/manifest.json/styles.css совпадают со сборкой; data.json не изменился. Бэкап: work/backups/jotdrop-before-anim80-2026-10-17-1724. Лог: work/logs/install-anim80-2026-10-17-1724.log.
@@ -46,7 +44,7 @@
 
 ## Known issues
 - Бэкап work/backups/jotdrop-before-optimization-2026-10-17-1552 НЕ является сборкой b1acced (main.js и styles.css отличаются от чистой сборки b1acced); это сборка, установленная в 14:58.
-- Зависание приложения на 3–4 с при переносе обычных карточек и лаг при переносе больших (много чекбоксов) — только в живом Obsidian; стенд с реальным содержимым Grail (только чтение) не воспроизводит. Причина не установлена, ждём трассу.
+- Зависание 3–4 с при переносе (и лаг больших карточек) воспроизводилось на нативном drag-and-drop, включая b1acced; устранение pointer-переносом ещё не подтверждено пользователем в Obsidian.
 - В Grail есть файлы sync-conflict от Syncthing (14:55) — они тоже отображаются на доске.
 - Причина жалобы на залипание/лаги drag в 31178a7 (до 17:00 2026-10-17) не установлена; симптом не воспроизводится в стенде и, по словам пользователя, пропал.
 - Первое открытие по-прежнему последовательно читает все заметки; скрытые загруженные карточки удерживаются до перестройки/закрытия. Утечка не установлена.
