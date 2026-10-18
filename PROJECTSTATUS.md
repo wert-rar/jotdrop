@@ -2,7 +2,7 @@
 
 ## Current goals
 - 2026-10-18: лаг переноса карточек ИСПРАВЛЕН и ПРОВЕРЕН в живом Obsidian (a440e0b, ветка codex/drag-filter-wip-20261016). Перенос — нативный drag-and-drop Windows/HTML5 (по выбору пользователя; pointer-вариант 1bc2b3b откатан в f499f43).
-- Слияние ветки в main и интеграция upstream не выполнялись: docs/upstream-update-assessment.md.
+- 2026-10-18: ветка codex/drag-filter-wip-20261016 перенесена в main репозитория wert-rar/jotdrop перемоткой (fc74005). Upstream Diexar-Labs не трогался; интеграция upstream не выполнялась: docs/upstream-update-assessment.md.
 
 ## Completed tasks still relevant to the current phase
 - a440e0b, src/customizations.js: `rankWindow` даёт новый jotdrop_order только перенесённой карточке, соседям — лишь если они не оставляют места (нет номера, равные номера, исчерпана точность). Полная перенумерация группы — только при первом переносе после другой сортировки. `moveCard` применяет drop сразу (`applyCardMove`), запись файлов идёт отдельной цепочкой (`saveCardMove`); render откладывается, пока есть несохранённые переносы (`pendingMoves`).
@@ -51,5 +51,4 @@
 - Первое открытие последовательно читает все заметки. Мобильный touch-перенос не реализован (FORK.md).
 
 ## Ordered next development steps
-1. Решить слияние ветки codex/drag-filter-wip-20261016 в main.
-2. Интеграция upstream: docs/upstream-update-assessment.md.
+1. Интеграция upstream: docs/upstream-update-assessment.md.
