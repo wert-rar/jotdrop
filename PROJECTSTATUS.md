@@ -1,54 +1,49 @@
 # PROJECTSTATUS
 
 ## Current goals
-- 2026-10-18: лаг переноса карточек ИСПРАВЛЕН и ПРОВЕРЕН в живом Obsidian (a440e0b, ветка codex/drag-filter-wip-20261016). Перенос — нативный drag-and-drop Windows/HTML5 (по выбору пользователя; pointer-вариант 1bc2b3b откатан в f499f43).
-- 2026-10-18: ветка codex/drag-filter-wip-20261016 перенесена в main репозитория wert-rar/jotdrop перемоткой (fc74005). Upstream Diexar-Labs не трогался; интеграция upstream не выполнялась: docs/upstream-update-assessment.md.
+- 2026-10-23: сравнение собственного main с upstream завершено; план переноса: [оценка upstream](docs/upstream-update-assessment.md). Код не переносился, релиз не готовился.
+- origin/main cc48eb3 уже содержит codex/drag-filter-wip-20261016 fc74005; разница — один коммит только в PROJECTSTATUS.md. Локальная main 7220247 устарела.
+- Latest session report: [2026-10-23-2335](work-reports/2026-10-23-2335.md).
 
 ## Completed tasks still relevant to the current phase
-- a440e0b, src/customizations.js: `rankWindow` даёт новый jotdrop_order только перенесённой карточке, соседям — лишь если они не оставляют места (нет номера, равные номера, исчерпана точность). Полная перенумерация группы — только при первом переносе после другой сортировки. `moveCard` применяет drop сразу (`applyCardMove`), запись файлов идёт отдельной цепочкой (`saveCardMove`); render откладывается, пока есть несохранённые переносы (`pendingMoves`).
-- b1acced: render откладывается на весь dragstart → dragend (защита от отрыва перетаскиваемой карточки).
-- 31178a7: поиск по кэшу, адресные обновления карточек; 98dd3dc: слот по верхнему краю; 2087dd4: анимация 80 мс.
-
-## Ошибки, которые нельзя повторять
-Продукт:
-- d42e0d0: render во время нативного переноса очищал сетку, перетаскиваемый элемент отрывался, drop не приходил («зависание после отпускания»). Исправлено в b1acced. Любой код, меняющий DOM карточек в обход обёртки render, вернёт эту ошибку.
-- С 7dbebb7 (01.10) до a440e0b: если в группе где угодно был пустой или повторяющийся jotdrop_order, перенос переписывал ВСЮ группу (до 112 заметок, 2,8 с), а следующий drop ждал в orderQueue (1,7 с в живой записи 18.10 00:35). Лаг зависел от данных, а не от сборки, поэтому «то есть, то нет». Запись файлов никогда не должна держать очередь применения переносов.
-- Почему номер в памяти был испорчен в 00:35 — НЕ установлено (на диске до и после всё корректно). Исправление не зависит от причины.
-
-Расследование (мои ошибки 17–18.10):
-- Объявил «виноват системный цикл перетаскивания Windows» и «Obsidian не перезапустили, работал старый код» без проверки. Оба вывода неверны. Перед выводом о загруженной сборке смотреть %APPDATA%/obsidian/obsidian.log («Loaded updated app» — время каждого запуска, UTC) и проверять в памяти признак сборки (например, наличие метода).
-- Записал в AGENTS.md правило по неверному выводу — пользователь отклонил, откачено (939cf12).
-- Зелёные тесты в стенде с mock и десятки чистых переносов не доказывают отсутствие лага: он включается состоянием данных. Ловить в живом Obsidian через CDP с записью числа записей файлов на каждый перенос.
-- Снимки «Восстановления файлов» (не чаще 1 раза в 5 минут на файл) отстают от диска и не годятся для восстановления точных номеров.
-- Ловушки, поставленные через CDP, живут только в памяти: перезапуск Obsidian их стирает. plugin.refreshViews() (kind all) перечитывает все карточки и снимает подмены в памяти.
-- Задавал пользователю вопросы, когда он просил действовать самостоятельно. Делать проверки самому, не просить пользователя.
-
-Окружение этой машины:
-- npm нет. Node: ~/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin. Шаги deploy:local выполнять вручную: verify-release-source.mjs deploy и base, tsc, esbuild.config.mjs production, копирование трёх файлов с бэкапом и сверкой SHA256.
-- В Bash-инструменте heredoc (`python - <<EOF`) зависает — писать скрипт в файл.
-- Хранилище: C:/Users/zhigu/Documents/Obsidian. Syncthing (это устройство — wertrar, ND4PG4H) синхронизирует заметки только с Pixel 9 Pro XL; .obsidian исключена. Путь C:/Users/zhigu/GitHub/Obsidian из прежних записей на этой машине отсутствует.
-- Живая проверка: Obsidian с --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1, затем обычный перезапуск. Масштаб интерфейса Obsidian 0,913, системный 1,25 (devicePixelRatio 1,1411). Окно поднимать через require('@electron/remote').getCurrentWindow().setAlwaysOnTop. Липкая панель JotDrop закрывает верхние карточки — брать точки через elementFromPoint. Большую трассу CDP писать потоком, не JSON.stringify.
-- Скрипты: work/live-drag-verify.cjs (переносы SendInput с восстановлением номеров и раскладки), work/obsidian-drag-record.cjs, work/os-mouse.ps1, work/os-drag-bench.cjs (каталог work игнорируется Git).
+- Исправления drag/filter вошли в собственный main. a440e0b отделяет применение drop от записи файлов и перенумеровывает минимальное окно карточек.
+- b1acced откладывает render на весь HTML5 dragstart → dragend. Pointer-вариант откатан в f499f43 по выбору пользователя.
+- Поиск по кэшу, адресное обновление карточек, сохранение DOM/колонок; маркер drop по верхнему краю и анимация 80 мс.
+- Выполнен pull рабочей ветки 304d8d0 → fc74005; сравнены source refs, опубликованные релизы и конфликты слияния с upstream.
 
 ## Key technical decisions
-- Установлено: a440e0b в C:/Users/zhigu/Documents/Obsidian/.obsidian/plugins/jotdrop (main.js SHA256 110ec15a…), manifest 0.20.5; Obsidian перезапущен 18.10 в 01:30 без отладочного порта. Бэкап предыдущей сборки: work/backups/jotdrop-before-rank-fix-2026-10-18-0115.
-- Порядок карточек: jotdrop_order во frontmatter; при равных номерах — сортировка created-desc.
-- Кэш данных на представление; cardsVersion защищает принятие результатов; обновления объединяются с задержкой 150 мс.
+- Canonical AgentMemory scope: wert-rar/jotdrop. MCP недоступен; recall/save в сессии 23.10 не выполнены.
+- Канонический источник — origin/main https://github.com/wert-rar/jotdrop.git. Upstream — Diexar-Labs; теги upstream при исследовании не импортировать поверх тегов форка.
+- Сохранить MarkdownRenderer, Live Preview, кэш, фильтры, колонки и разделение применения/сохранения переносов при интеграции.
+- Форк пишет jotdrop_order, upstream plugin/Android — order. Выбор единого контракта и миграция не согласованы; не вводить их молча.
+- Сравнение закреплено за origin/main cc48eb39fae75882a9ad0f3c308c9a97f1dc0ccf и upstream/main e8afaa1f0b2e8466c040d1085c0d91052cf50a17. Перед реализацией обновить refs.
 
 ## Main files changed
-- src/customizations.js: moveCard, rankWindow, applyCardMove, saveCardMove, finishCardMove.
-- scripts/check-fork-browser.cjs: 10 новых проверок (одна запись при испорченных номерах в группе, равные соседи, переход за карточку без номера, второй drop применяется во время записи первого).
+- В сессии 23.10 локально изменена только документация: docs/upstream-update-assessment.md, PROJECTSTATUS.md, work-reports/2026-10-23-2329.md, work-reports/2026-10-23-2335.md. Изменения не закоммичены.
+- Основной код форка: src/customizations.js, src/view.ts, src/main.ts; проверки — scripts/check-board-updates.cjs, scripts/check-fork-browser.cjs, scripts/check-fork-markdown.cjs.
 
 ## Testing and verification results
-- PASS живой Obsidian a440e0b: 4 переноса системной мышью при подставленном в памяти повторе номера (старое правило переписало бы 112 заметок) — по 1 записи, drop через 12–14 мс после отпускания, запись 63–186 мс; ещё 4 без подстановки — так же. Номера и раскладка восстановлены, расхождений 0 (work/logs/live-verify-*.json).
-- RED на f499f43: 8 записей вместо одной (work/logs/rank-red.log); RED очереди при ожидании записей (work/logs/queue-red.log).
-- PASS: tsc, esbuild, полный check:fork — 69 board, Markdown, 187 browser, 22 tag, 250 retention, 14+3 drag-refresh, 7 drag-window (work/logs/rank-check-fork.log).
-- Живая запись лага f499f43 18.10 00:35: work/logs/peek-record.json. Android/touch NOT RUN.
+- PASS 23.10: source fetch/live SHA; pull fast-forward; сравнение merge-base, истории и файлов; реальные версии и assets через GitHub Releases API.
+- EXPECTED CONFLICTS 23.10: git merge-tree --write-tree --name-only origin/main upstream/main, exit 1, семь конфликтных файлов; индекс и checkout не изменены. Лог: work/logs/upstream-merge-tree-2026-10-23.log.
+- PASS в сессии pull: git diff --check ORIG_HEAD HEAD и git diff --check. Проверки приложения 23.10 NOT RUN; объединённой сборки пока нет.
+- Исторический PASS 18.10 для a440e0b: 8 живых переносов в Obsidian, по одной записи; 4 с повтором ранга в памяти, drop 12–14 мс, запись 63–186 мс; состояние восстановлено без расхождений. tsc, esbuild, полный check:fork прошли тогда, не повторялись 23.10. Android/touch NOT RUN.
 
 ## Known issues
-- Источник испорченного номера в памяти не найден.
-- В Grail есть файлы sync-conflict от Syncthing (17.10 14:55); они отображаются на доске.
-- Первое открытие последовательно читает все заметки. Мобильный touch-перенос не реализован (FORK.md).
+- Upstream plugin 0.21.1 и Android 0.28.24 не интегрированы. Форк manifest/main 0.20.5; эта версия уже опубликована и не может быть повторно использована для нового релиза.
+- Нужна адаптация: hashtags и фильтры/кэш; архив из компактного редактора; мобильная клавиатура и Live Preview; порядок между plugin/Android. Подробности в оценке upstream.
+- Android форка остаётся 0.28.2, code 56; его updater указывает на Diexar-Labs. Ключ подписи и установленная сборка в этой сессии не проверялись.
+- Источник испорченного ранга в памяти, пойманного 18.10, не установлен; a440e0b устраняет массовую запись независимо от этой причины.
+- Первое открытие последовательно читает заметки; mobile touch-перенос форка не реализован. AgentMemory MCP недоступен.
+
+## Approaches already tried but unsuccessful
+- Render во время drag отрывал элемент и срывал drop; сохранять защиту на весь перенос.
+- Полная перенумерация группы из-за любого пустого/повторного ранга и ожидание файлов в orderQueue давали лаг до 2,8 с; заменены минимальным окном рангов и отдельной очередью записи.
+- Объяснения лага системным циклом Windows и старой загруженной сборкой не подтвердились. Проверять живой процесс, момент загрузки и записи файлов; зелёный mock-стенд не доказывает отсутствие проблемы, зависящей от данных.
+- В сессии 23.10 сеть/.git недоступны из песочницы; разрешённые повторные вызовы с повышенным доступом прошли.
 
 ## Ordered next development steps
-1. Интеграция upstream: docs/upstream-update-assessment.md.
+1. Согласовать объём релиза по docs/upstream-update-assessment.md; рекомендуемый первый блок — сохранение hashtags и согласование с фильтрами форка.
+2. После согласования сохранить документальные изменения, обновить refs и создать feature branch от актуального origin/main.
+3. Перенести archive collision и OG preview fixes; mobile keyboard адаптировать под Live Preview. Imports/labels/recurring reminders добавлять отдельными блоками выбранного объёма.
+4. Выполнить gated build, check:fork и проверки перенесённых функций, затем живую проверку Obsidian. Android готовить отдельно с решением по порядку, updater и подписи.
+5. Новая версия, merge в собственный main, чистый источник HEAD == live origin/main, verify:release/verify:tag, затем публикация.
