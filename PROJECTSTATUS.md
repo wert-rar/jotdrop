@@ -1,42 +1,41 @@
 # PROJECTSTATUS
 
 ## Current goals
-- Выпустить JotDrop 0.28.24: плагин форка 0.21.2 и неизменённый официальный Android 0.28.24, по прямому разрешению пользователя. Публикация ещё не выполнена.
-- Кандидат: codex/upstream-plugin-20261023 от origin/main cc48eb3. Latest session report: [2026-10-24-0018](work-reports/2026-10-24-0018.md).
+- Опубликован [JotDrop 0.28.24](https://github.com/wert-rar/jotdrop/releases/tag/0.21.2): plugin 0.21.2 и Android upstream 0.28.24 как есть. Tag совпадает с manifest плагина; title следует Android.
+- Все итоговые проверки опубликованных файлов прошли.
+- Latest session report: [2026-10-24-0037](work-reports/2026-10-24-0037.md).
 
 ## Completed tasks still relevant to the current phase
-- Сохранены Markdown-карточки, Live Preview, компактный редактор, кэш, фильтры исключения тегов, колонки и быстрый drag a440e0b.
-- Перенесены plugin fixes e8afaa1: hashtags, archive collisions, OG previews, mobile keyboard; добавлены recurring reminders, labels и Keep/Markdown/ENEX import. Напоминания и labels адаптированы под компактные панели.
-- Android tree полностью совпадает с upstream e8afaa1 / v0.28.24 (code 78), без доработок. Workflow проверяет официальный APK и прикладывает исходный бинарник к plugin tag 0.21.2 с названием JotDrop 0.28.24.
+- PR #2 слит в main; release source/tag 0.21.2: 288e7d72ae90f2c6e8c1cf7d9c223c03244c24b5.
+- Compact recurring reminders и labels; Keep/Markdown/ENEX import; typed hashtags, archive collisions, OG previews, mobile keyboard fixes.
+- Сохранены MarkdownRenderer, native Live Preview, cached tag exclusions, DOM/scroll, локальные колонки и быстрый drag с отдельной записью.
+- Android tree полностью совпадает с e8afaa1 / v0.28.24, code 78. В релиз включён оригинальный upstream APK с неизменными байтами, подписью, updater и интерфейсом. Рабочее хранилище Obsidian не обновлялось.
 
 ## Key technical decisions
-- Origin/main wert-rar/jotdrop — канонический релизный источник. Upstream e8afaa1f0b2e8466c040d1085c0d91052cf50a17 закреплён для этой интеграции; его v0.28.24 указывает на тот же SHA.
-- Android APK SHA256: c3a6f1e57c8a5a2114d1aca009dc16cfe9c2ef5fc419e4f3c3604f7e37128109. Подпись и updater upstream сохраняются; отдельные BUILD-INFO для плагина и Android.
-- Плагин хранит jotdrop_order и локальные колонки, Android — order. Миграции и одинаковый порядок между платформами не входят в релиз.
-- Обновлённые пользовательские инструкции 24.10 отменили прежние инструкции AGENTS.md; обязательного AgentMemory больше нет. Исторический scope wert-rar/jotdrop не менялся.
+- Канонический источник origin/main wert-rar/jotdrop; upstream Diexar-Labs. Plugin changes selectively integrated; Android unchanged.
+- Шесть assets: main.js, manifest.json, styles.css, jotdrop.apk, BUILD-INFO.txt и ANDROID-BUILD-INFO.txt. APK SHA256 c3a6f1e57c8a5a2114d1aca009dc16cfe9c2ef5fc419e4f3c3604f7e37128109 совпадает с upstream; отдельные BUILD-INFO сохраняют обе provenance.
+- Plugin хранит jotdrop_order и локальные колонки; Android — order. Миграция не выполнялась.
 
 ## Main files changed
-- src/{main,view,edit,capture,customizations,metadata,i18n,settings,ogfetch,reminderScheduler} и новые import/label/recurrence/mobile modules; styles.css.
-- android/ — точная копия upstream. scripts/check-* и mocks; .github/workflows/android-build.yml; manifest/package/lock 0.21.2; FORK.md; docs/releases/0.21.2.md; отчёты.
+- src/, styles.css, android/, scripts/check-* и mocks; manifest/package/lock; .github/workflows/android-build.yml; FORK.md; docs/releases/0.21.2.md; статус и отчёты.
 
 ## Testing and verification results
-- PASS: gated npm run build; npm run check:integration (10 групп); полный npm run check:fork: 70 board, Markdown, 195 browser, реальные мышиные переносы, 22 tag, 250 retention, 14 drag-refresh + 3 real drags, 7 window checks.
-- PASS: git diff --check; Android tree совпадает с upstream через индекс Git; опубликованный APK и SHA256 проверены по GitHub API.
-- Логи: work/logs/release-build.log, release-check-fork.log, integration-checks.log. UI снимки: work/verification/upstream-*-preview.png.
-- NOT RUN: живая проверка кандидата в Obsidian, R8 Android test-release в CI, release gates. На этой машине Java/Android SDK отсутствуют; R8 проверяется в GitHub Actions.
+- PASS gated build, 10 integration groups и полный check:fork: 70 board, Markdown, 195 browser, real native mouse, 22 tag, 250 retention, 14+3 drag-refresh и 7 window checks.
+- PASS настоящий Obsidian в отдельном work/verification/live-vault: native editor/display/save/cancel, Markdown/checkbox, reminders/labels, light/dark themes, tooltips, archive collision и native drag. Логи live-release-result.json, live-release.log и live-editor-visibility.log; снимки live-*.png.
+- PASS CI R8 android:test-release и plugin checks: run 40026096195. Локально Java/SDK отсутствуют.
+- PASS clean release source gate HEAD == live origin/main, verify:release, production build, verify:tag; publication run 40027052834 success, шесть assets, APK package/version/signature и upstream digest проверены.
+- Итог опубликованного bundle/CSS/provenance: Все итоговые проверки опубликованных файлов прошли. Компиляторы: local esbuild=0.28.2; lock/CI esbuild=0.28.2; первоначальные hashes различались. Вместо утверждения о побайтовом равенстве опубликованный bundle напрямую проверен полным check:fork (exit 0). Подробности release-final-receipt.json и published-bundle-check-fork.log.
+- NOT RUN Android device/emulator и установка в рабочий vault.
 
 ## Known issues
-- Релиз не опубликован: обязательны CI и живая проверка по FORK.md.
-- Различный порядок Android/plugin и отсутствие mobile touch drag в форке сохраняются.
-- Первое открытие последовательно читает заметки; причина старого испорченного ранга в памяти не найдена, a440e0b ограничивает запись независимо от причины.
+- Manual order Android/plugin различается; mobile touch drag форка отсутствует; первое открытие последовательно читает заметки.
+- Побайтовая воспроизводимость local/CI bundle не заявляется; проверка опубликованного файла выполнена напрямую.
 
 ## Approaches already tried but unsuccessful
-- Старый browser mock объявлял занятыми все пути: новый archive collision loop зависал. Заглушка теперь возвращает только реальные fixture files/folders; default browser прошёл.
-- VM-стенду добавлены обязательные TextDecoder/TextEncoder; board check обновлён на reschedule по metadata. Изолированный hashtag check проверяет plugin; Android берётся из upstream отдельно.
-- Первый запуск в прежний log не состоялся из-за блокировки старым процессом; используется новый release-browser-default.log. Проверки после этого прошли.
+- Filesystem mock занимал все имена и зависал на archive collision loop; исправлен. VM test context дополнен TextDecoder/TextEncoder; board test учитывает metadata reminders.
+- Новый test vault требовал trust prompt; подтверждено только для созданного нами test vault. Рабочее хранилище не затронуто.
+- Первое сравнение local/CI JS hash не совпало; данные компилятора и прямая проверка опубликованного bundle сохранены. PowerShell JSON lockfile требовал -AsHashtable из-за пустого ключа packages.
 
 ## Ordered next development steps
-1. Дождаться CI R8 test-release и проверить кандидат в отдельном work/verification/live-vault (рабочее хранилище не изменять).
-2. При успешной проверке merge PR в origin/main; получить новый live SHA и clean HEAD == origin/main.
-3. verify:release, gated release build и verify:tag -- 0.21.2; push tag, проверить workflow публикации и шесть assets, включая исходный Android APK.
-4. Обновить финальный статус и отчёт с URL релиза и фактическими проверками. Повторное разрешение на выпуск не требуется.
+1. При запросе пользователя установить проверенный plugin 0.21.2 в рабочий vault; в этой сессии установка туда не выполнялась.
+2. Новую разработку начинать с fetch live main; Android и миграцию порядка менять только отдельной задачей.
