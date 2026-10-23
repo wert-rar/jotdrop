@@ -39,6 +39,20 @@
     <string name="error_unknown">Unknown error.</string>
     <string name="error_with_message">Error: %1$s</string>
     <string name="error_generic">Error</string>
+    <string name="error_subfolder_missing">Folder \'%1$s\' does not exist.</string>
+    <string name="error_subfolder_create">Folder \'%1$s\' could not be created.</string>
+    <string name="error_interrupted_save">An interrupted save could not be completed. Try again.</string>
+    <string name="error_parked_save">\"%1$s\" was not saved completely. Open the note to keep that change as a copy or discard it.</string>
+    <string name="error_parked_save_missing">\"%1$s\" was not saved completely, and JotDrop cannot reach that note. Make its folder available again, or pick the vault folder again, so JotDrop can finish the save or keep the change as a copy.</string>
+    <string name="error_parked_copy">The copy could not be saved. Check that the vault folder is available and try again.</string>
+    <string name="parked_save_title">This note was not saved completely</string>
+    <string name="parked_save_message">The last change to this note was cut off, and JotDrop could not finish saving it. The note may now be incomplete or empty. Keep as copy saves the full change as a separate note. Discard change throws the full change away.</string>
+    <string name="parked_keep_copy">Keep as copy</string>
+    <string name="parked_discard">Discard change</string>
+    <string name="parked_discard_title">Discard the unfinished change?</string>
+    <string name="parked_discard_message">The full version of the change will be lost. Only the note as it is now remains, and it may be incomplete or empty. Keep as copy is safer.</string>
+    <string name="parked_copy_saved">Saved as \"%1$s\".</string>
+    <string name="parked_nothing_to_keep">There was nothing left to keep. The note is available again.</string>
 
     <string name="loading">Loading…</string>
     <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>
@@ -59,8 +73,11 @@
     <string name="action_open_external">Open externally</string>
     <string name="action_open_image">Open image</string>
     <string name="lightbox_load_failed">Could not load image.</string>
-    <string name="reminder_channel_name">Reminders</string>
-    <string name="reminder_channel_desc">Notifications for note reminders.</string>
+    <string name="reminder_channel_name">Reminder alarms</string>
+    <string name="reminder_channel_desc">Note reminders using the alarm tone and alarm volume by default.</string>
+    <string name="section_reminder_sound">Reminder alarms</string>
+    <string name="reminder_sound_settings">Alarm sound &amp; vibration</string>
+    <string name="reminder_sound_hint">New reminder alarms use your device alarm tone and alarm volume, not the notification sound. Choose Sound in Android settings to preview and select a different tone. Existing custom tones or muted reminders are kept. Check your alarm volume; Do Not Disturb and device restrictions can still silence or delay reminders.</string>
     <string name="reminder_notification_title">JotDrop reminder</string>
     <string name="reminder_default_title">Open note</string>
     <string name="action_set_reminder">Set reminder</string>
@@ -68,6 +85,30 @@
     <string name="label_reminder">Reminder</string>
     <string name="reminder_none">No reminder set</string>
     <string name="reminder_permission_needed">Allow notifications to receive reminders.</string>
+    <string name="repeat_label">Repeat</string>
+    <string name="repeat_none">Does not repeat</string>
+    <string name="repeat_daily">Daily</string>
+    <string name="repeat_weekly">Weekly</string>
+    <string name="repeat_monthly">Monthly</string>
+    <string name="repeat_yearly">Yearly</string>
+    <string name="repeat_every">Custom interval</string>
+    <string name="repeat_ordinal">On a weekday</string>
+    <string name="ends_label">Ends</string>
+    <string name="ends_never">Never</string>
+    <string name="ends_after">After N times</string>
+    <string name="ends_after_count">After %1$d times</string>
+    <string name="ends_on_date">On a date</string>
+    <string name="every_days">day(s)</string>
+    <string name="every_weeks">week(s)</string>
+    <string name="every_months">month(s)</string>
+    <string name="ordinal_first">First</string>
+    <string name="ordinal_second">Second</string>
+    <string name="ordinal_third">Third</string>
+    <string name="ordinal_fourth">Fourth</string>
+    <string name="ordinal_last">Last</string>
+    <string name="every_title">Every</string>
+    <string name="ordinal_title">On the</string>
+    <string name="weekday">weekday</string>
     <string name="action_pin">Pin</string>
     <string name="action_unpin">Unpin</string>
     <string name="action_color">Pick color</string>
@@ -88,6 +129,9 @@
     <string name="audio_pause">Pause audio</string>
     <string name="audio_load_failed">Audio unavailable</string>
     <string name="voice_memo_card_label">Voice memo</string>
+    <string name="recording_notification_title">Recording active</string>
+    <string name="recording_notification_channel_name">Voice memo recording</string>
+    <string name="recording_notification_channel_desc">Shows when a voice memo recording is active.</string>
     <string name="action_insert_photo">Insert photo</string>
     <string name="action_take_photo">Take photo</string>
     <string name="action_pick_from_gallery">Pick from gallery</string>
@@ -96,6 +140,7 @@
     <string name="section_support">About JotDrop</string>
     <string name="support_blurb">JotDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.</string>
     <string name="support_kofi">☕ Buy me a Ko-fi</string>
+    <string name="privacy_policy">Privacy policy</string>
     <string name="support_sponsors">❤ Sponsor on GitHub</string>
 
     <string name="action_ocr_camera">Text from photo (camera)</string>
@@ -134,7 +179,7 @@
     <string name="bulk_archive_title">Archive %1$d notes?</string>
     <string name="bulk_archive_message">The notes will be moved to the Archive subfolder.</string>
     <string name="bulk_delete_title">Delete %1$d notes?</string>
-    <string name="bulk_delete_message">This action cannot be undone.</string>
+    <string name="bulk_delete_message">The notes will move to Trash. You can restore them there.</string>
     <string name="toast_bulk_archived">Archived %1$d notes</string>
     <string name="toast_bulk_deleted">Deleted %1$d notes</string>
     <string name="toast_bulk_partial">%1$d done, %2$d failed</string>
@@ -149,8 +194,12 @@
     <string name="editor_title_new">New note</string>
     <string name="editor_title_edit">Edit note</string>
     <string name="editor_hint">Write here…</string>
+    <string name="editor_body_too_large">This note is too long to show here. Open it in Obsidian to edit the text. Tags, color and pin still work and keep the text unchanged.</string>
     <string name="editor_title_hint">Title (optional)</string>
     <string name="more_options">More options</string>
+    <string name="sort_title">Sort order</string>
+    <string name="sort_newest">Newest first</string>
+    <string name="sort_manual">Drag cards</string>
     <string name="update_check">Check for updates</string>
     <string name="update_available">New version %1$s available</string>
     <string name="update_view">View</string>
@@ -158,7 +207,7 @@
     <string name="update_up_to_date">You\'re on the latest version (%1$s)</string>
 
     <string name="delete_title">Delete note?</string>
-    <string name="delete_message">This action cannot be undone.</string>
+    <string name="delete_message">Move this note to Trash? You can restore it there. Notes already in Trash are permanently deleted.</string>
     <string name="archive_title">Archive note?</string>
     <string name="archive_message">The note will be moved to the Archive subfolder.</string>
 
@@ -181,4 +230,27 @@
     <string name="color_pink">Pink</string>
     <string name="color_brown">Brown</string>
     <string name="color_gray">Gray</string>
+    <string name="nav_open_menu">Open navigation menu</string>
+    <string name="nav_notes">Notes</string>
+    <string name="nav_reminders">Reminders</string>
+    <string name="nav_labels">Labels</string>
+    <string name="nav_edit_labels">Edit labels</string>
+    <string name="nav_create_label">Create label</string>
+    <string name="nav_assign_label">Add label to selected notes</string>
+    <string name="nav_archive">Archive</string>
+    <string name="nav_trash">Trash</string>
+    <string name="nav_help">Help and feedback</string>
+    <string name="nav_feedback">Report an issue</string>
+    <string name="nav_help_message">Create notes with +, record voice memos, capture photos or share from other apps. Use labels to organize your notes. Long-press a card to select notes, add a label, archive or delete them. In Archive and Trash, select notes and tap Restore to return them to Notes. Trash keeps notes until you permanently delete them. Your notes stay in your chosen folder as Markdown files.</string>
+    <string name="action_restore">Restore to Notes</string>
+    <string name="empty_collection">No notes in this view.</string>
+    <string name="delete_permanent_message">Permanently delete these notes? This cannot be undone.</string>
+    <string name="label_rename">Rename label</string>
+    <string name="label_delete">Delete label</string>
+    <string name="label_delete_message">Remove label "%1$s" from all notes, including Archive and Trash? The notes themselves will not be deleted.</string>
+    <string name="label_invalid">Enter a non-empty label name without line breaks or control characters.</string>
+    <string name="label_duplicate">A label with this name already exists.</string>
+    <string name="label_hint">Labels are collections, separate from tags. Spaces stay unchanged.</string>
+    <string name="label_search">Search or create a label</string>
+    <string name="label_create_first">Create a label in the navigation menu first.</string>
 </resources>

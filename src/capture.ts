@@ -10,7 +10,9 @@ import {
   updateMeta,
 } from "./metadata";
 import { buildLinkNote, detectAllUrls, fetchOg, OgPreview } from "./ogfetch";
+import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard } from "./mobileKeyboard";
 
 export class QuickCaptureModal extends Modal {
   plugin: JotDropPlugin;
@@ -18,27 +20,41 @@ export class QuickCaptureModal extends Modal {
   textArea!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
   private tagInputEl: HTMLInputElement | null = null;
+  private labelChipsEl!: HTMLElement;
+  private labelInputEl: HTMLInputElement | null = null;
+  private cleanupKeyboard: (() => void) | null = null;
+  private cleanupListEditor: (() => void) | null = null;
   private state: {
     color: ColorName;
     tags: string[];
+    labels: string[];
     pinned: boolean;
     reminder: string | null;
+    reminderRepeat: string | null;
+    reminderUntil: string | null;
+    reminderLimit: number | null;
   } = {
     color: "default",
     tags: [],
+    labels: [],
     pinned: false,
     reminder: null,
+    reminderRepeat: null,
+    reminderUntil: null,
+    reminderLimit: null,
   };
 
-  constructor(app: App, plugin: JotDropPlugin) {
+  constructor(app: App, plugin: JotDropPlugin, initialLabels: string[] = []) {
     super(app);
     this.plugin = plugin;
+    this.state.labels = initialLabels.filter((l) => typeof l === "string" && l.length > 0);
   }
 
   onOpen(): void {
     const { contentEl, titleEl } = this;
     titleEl.setText(t("capture_title"));
     contentEl.addClass("jotdrop-capture");
+    this.cleanupKeyboard = keepModalAboveKeyboard(this);
 
     this.renderControls(contentEl);
 
@@ -137,7 +153,13 @@ export class QuickCaptureModal extends Modal {
     clearReminder.addEventListener("click", () => {
       reminderInput.value = "";
       this.state.reminder = null;
+      this.state.reminderRepeat = null;
+      this.state.reminderUntil = null;
+      this.state.reminderLimit = null;
+      this.renderControls(parent);
     });
+
+    this.renderRepeatControls(bar);
 
     // Tags — chips and input share the same flex container so the input always
     // follows directly after the last chip, even when chips wrap to a new line.
@@ -192,6 +214,66 @@ export class QuickCaptureModal extends Modal {
       if (/[\s,]/.test(this.tagInputEl?.value ?? "")) commit(true);
     });
     this.tagInputEl.addEventListener("blur", () => commit());
+
+    // Labels — chips and input share the same flex container.
+    const labelRow = bar.createDiv({ cls: "jotdrop-edit-labelrow" });
+    labelRow.createSpan({ text: t("label_section"), cls: "jotdrop-edit-label" });
+    this.labelChipsEl = labelRow.createDiv({ cls: "jotdrop-edit-chips" });
+    this.labelInputEl = null;
+    this.renderLabelChips();
+
+    this.labelInputEl = this.labelChipsEl.createEl("input", {
+      cls: "jotdrop-edit-taginput",
+      attr: { type: "text", placeholder: t("label_placeholder") },
+    });
+    const labelDatalistId = `jotdrop-labelcompletion-capture-${Date.now()}`;
+    const labelDatalist = labelRow.createEl("datalist", { attr: { id: labelDatalistId } });
+    this.labelInputEl.setAttribute("list", labelDatalistId);
+    for (const label of this.state.labels) {
+      labelDatalist.createEl("option", { attr: { value: label } });
+    }
+    const labelCommit = (restoreFocus = false) => {
+      const input = this.labelInputEl;
+      if (!input) return;
+      const value = input.value.trim();
+      if (value && !this.state.labels.includes(value)) {
+        this.state.labels.push(value);
+        this.renderLabelChips();
+      }
+      input.value = "";
+      if (restoreFocus) input.focus();
+    };
+    this.labelInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (this.labelInputEl?.value.trim()) {
+          e.preventDefault();
+          labelCommit(true);
+        }
+      } else if (e.key === "Backspace" && this.labelInputEl?.value === "" && this.state.labels.length > 0) {
+        this.state.labels.pop();
+        this.renderLabelChips();
+      }
+    });
+    this.labelInputEl.addEventListener("blur", () => labelCommit());
+  }
+
+  private renderRepeatControls(parent: Element): void {
+    const wrap = parent.createDiv({ cls: "jotdrop-repeat-controls" });
+    const editor = new RepeatEditor(
+      wrap,
+      {
+        repeat: this.state.reminderRepeat ?? "",
+        until: this.state.reminderUntil,
+        limit: this.state.reminderLimit,
+      },
+      () => {
+        const cfg = editor.getConfig();
+        this.state.reminderRepeat = cfg.repeat || null;
+        this.state.reminderUntil = cfg.until;
+        this.state.reminderLimit = cfg.limit;
+      },
+    );
+    editor.render();
   }
 
   private renderChips(): void {
@@ -210,6 +292,21 @@ export class QuickCaptureModal extends Modal {
     if (this.tagInputEl) this.chipsEl.appendChild(this.tagInputEl);
   }
 
+  private renderLabelChips(): void {
+    if (!this.labelChipsEl) return;
+    this.labelChipsEl.empty();
+    for (const label of this.state.labels) {
+      const chip = this.labelChipsEl.createSpan({ cls: "jotdrop-edit-chip" });
+      chip.createSpan({ text: label });
+      const x = chip.createSpan({ cls: "jotdrop-edit-chip-x", text: "×" });
+      x.addEventListener("click", () => {
+        this.state.labels = this.state.labels.filter((l) => l !== label);
+        this.renderLabelChips();
+      });
+    }
+    if (this.labelInputEl) this.labelChipsEl.appendChild(this.labelInputEl);
+  }
+
   private insertLinkAtCursor(linkPath: string): void {
     const ta = this.textArea;
     const insert = `[[${linkPath}]]`;
@@ -219,6 +316,7 @@ export class QuickCaptureModal extends Modal {
     const caret = start + insert.length;
     ta.selectionStart = ta.selectionEnd = caret;
     ta.focus();
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   private toggleOrInsertChecklist(): void {
@@ -235,6 +333,7 @@ export class QuickCaptureModal extends Modal {
       return;
     }
     let content = joinHeadingTitle(titleVal, bodyVal);
+    let fromPreview = false;
 
     // If the text contains a URL, fetch OG meta and embed the thumbnail.
     // With multiple URLs we try them sequentially until one yields an OG image.
@@ -263,6 +362,8 @@ export class QuickCaptureModal extends Modal {
           }
         }
         if (chosenUrl && chosenPreview) {
+          // A bare URL is replaced by the page's own title and description: outside text.
+          fromPreview = content.trim() === chosenUrl;
           content = buildLinkNote(chosenUrl, chosenPreview, content);
         }
       } catch (e) {
@@ -273,21 +374,26 @@ export class QuickCaptureModal extends Modal {
     }
 
     try {
-      // Escape inline #hashtags so they do not pollute Obsidian's vault-wide
-      // tag index. User tags are already in `state.tags` and go to frontmatter.
-      const safeContent = neutralizeBodyHashtags(content);
+      // Only text from a link preview is escaped, so a page's #hashtags do not
+      // pollute Obsidian's tag index. Hashtags the user typed are kept.
+      const safeContent = fromPreview ? neutralizeBodyHashtags(content) : content;
       const file = await createNoteInFolder(this.app, this.plugin.settings.notesFolder, safeContent);
       if (
         this.state.color !== "default" ||
         this.state.tags.length > 0 ||
+        this.state.labels.length > 0 ||
         this.state.pinned ||
         this.state.reminder
       ) {
         await updateMeta(this.app, file, {
           color: this.state.color,
           tags: this.state.tags,
+          labels: this.state.labels,
           pinned: this.state.pinned,
           reminder: this.state.reminder,
+          reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+          reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+          reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
         });
       }
       new Notice(t("notice_saved", file.basename));
@@ -301,6 +407,10 @@ export class QuickCaptureModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupListEditor?.();
+    this.cleanupListEditor = null;
+    this.cleanupKeyboard?.();
+    this.cleanupKeyboard = null;
     this.contentEl.empty();
   }
 }

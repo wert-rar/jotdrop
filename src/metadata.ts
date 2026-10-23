@@ -1,4 +1,5 @@
 import { App, TFile } from "obsidian";
+import { parseRepeat } from "./recurrence";
 
 export type ColorName =
   | "default"
@@ -36,21 +37,55 @@ export function colorLabel(name: ColorName): string {
 
 export interface NoteMeta {
   color: ColorName;
+  /** Frontmatter `tags`: the only tags JotDrop's editors read and write. */
   tags: string[];
+  /** `#hashtags` in the body as Obsidian indexes them; shown and filtered, never written to frontmatter. */
+  inlineTags: string[];
+  labels: string[];
   pinned: boolean;
   /** ISO 8601 local datetime string ("YYYY-MM-DDTHH:mm") for a reminder, or null. */
   reminder: string | null;
+  /** `reminder_repeat` value (daily | weekly:… | monthly | yearly | every:… | ordinal:…), or null. */
+  reminderRepeat: string | null;
+  /** `reminder_until` inclusive date (YYYY-MM-DD), or null. */
+  reminderUntil: string | null;
+  /** `reminder_limit` total occurrences (positive integer), or null. */
+  reminderLimit: number | null;
+  /** `reminder_done` occurrences already fired (nonnegative). */
+  reminderDone: number;
+  /** Manual-sort `order` rank (finite number), or null when unset. */
+  order: number | null;
 }
 
 export const DEFAULT_META: NoteMeta = {
   color: "default",
   tags: [],
+  inlineTags: [],
+  labels: [],
   pinned: false,
   reminder: null,
+  reminderRepeat: null,
+  reminderUntil: null,
+  reminderLimit: null,
+  reminderDone: 0,
+  order: null,
 };
 
 export function isColorName(value: unknown): value is ColorName {
   return typeof value === "string" && (COLOR_NAMES as string[]).includes(value);
+}
+
+export function readLabels(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const seen = new Set<string>();
+  return values.filter((label): label is string => typeof label === "string")
+    .map((label) => label.trim())
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (!label || /[\x00-\x1f\x7f-\x9f]/.test(label) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 /**
@@ -78,10 +113,13 @@ export function readMeta(app: App, file: TFile): NoteMeta {
   } else if (typeof fm.tags === "string") {
     for (const t of fm.tags.split(/[\s,]+/)) pushTag(t);
   }
-  // Deliberately NO inline #hashtags included. Otherwise tags from shared
-  // social-media posts (#fyp, #trending) pollute the card chips and the
-  // vault-wide graph view. User tags come via the capture/edit chip UI
-  // and land neatly in frontmatter.
+  // Inline #hashtags count as tags, as in Obsidian. Shared and clipped text is
+  // escaped on save (`\#fyp`), which Obsidian's own parser does not index.
+  const frontmatterTagCount = tags.length;
+  for (const tag of cache?.tags ?? []) pushTag(tag.tag);
+  const inlineTags = tags.splice(frontmatterTagCount);
+
+  const labels = readLabels(fm.jotdrop_labels);
 
   const pinned = fm.pinned === true || fm.pinned === "true";
 
@@ -93,7 +131,40 @@ export function readMeta(app: App, file: TFile): NoteMeta {
     reminder = fm.reminder.trim();
   }
 
-  return { color, tags, pinned, reminder };
+  let reminderRepeat: string | null = null;
+  if (typeof fm.reminder_repeat === "string" && fm.reminder_repeat.trim().length > 0) {
+    reminderRepeat = fm.reminder_repeat.trim();
+  }
+
+  let reminderUntil: string | null = null;
+  if (typeof fm.reminder_until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fm.reminder_until.trim())) {
+    reminderUntil = fm.reminder_until.trim();
+  }
+
+  let reminderLimit: number | null = null;
+  if (
+    typeof fm.reminder_limit === "number" &&
+    Number.isInteger(fm.reminder_limit) &&
+    fm.reminder_limit > 0
+  ) {
+    reminderLimit = fm.reminder_limit;
+  }
+
+  let reminderDone = 0;
+  if (
+    typeof fm.reminder_done === "number" &&
+    Number.isInteger(fm.reminder_done) &&
+    fm.reminder_done >= 0
+  ) {
+    reminderDone = fm.reminder_done;
+  }
+
+  let order: number | null = null;
+  if (typeof fm.order === "number" && Number.isFinite(fm.order)) {
+    order = fm.order;
+  }
+
+  return { color, tags, inlineTags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
 }
 
 /**
@@ -105,6 +176,13 @@ export async function updateMeta(
   patch: Partial<NoteMeta>,
 ): Promise<void> {
   await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+    // An edited schedule starts over; advancement supplies reminderDone explicitly.
+    if (patch.reminderDone === undefined && (
+      (patch.reminder !== undefined && patch.reminder !== (fm.reminder ?? null)) ||
+      (patch.reminderRepeat !== undefined && patch.reminderRepeat !== (fm.reminder_repeat ?? null)) ||
+      (patch.reminderUntil !== undefined && patch.reminderUntil !== (fm.reminder_until ?? null)) ||
+      (patch.reminderLimit !== undefined && patch.reminderLimit !== (fm.reminder_limit ?? null))
+    )) delete fm.reminder_done;
     if (patch.color !== undefined) {
       if (patch.color === "default") delete fm.color;
       else fm.color = patch.color;
@@ -120,13 +198,57 @@ export async function updateMeta(
       if (cleaned.length === 0) delete fm.tags;
       else fm.tags = Array.from(new Set(cleaned));
     }
+    if (patch.labels !== undefined) {
+      const cleaned = readLabels(patch.labels);
+      if (cleaned.length === 0) delete fm.jotdrop_labels;
+      else fm.jotdrop_labels = cleaned;
+    }
     if (patch.reminder !== undefined) {
       if (patch.reminder === null || patch.reminder === "") {
         delete fm.reminder;
+        // A cleared reminder also clears the whole recurrence config, so no
+        // dangling `reminder_repeat` survives without a base datetime.
+        delete fm.reminder_repeat;
+        delete fm.reminder_until;
+        delete fm.reminder_limit;
+        delete fm.reminder_done;
       } else {
         fm.reminder = patch.reminder;
       }
     }
+    if (patch.reminderRepeat !== undefined) {
+      if (patch.reminderRepeat === null || patch.reminderRepeat === "") delete fm.reminder_repeat;
+      else fm.reminder_repeat = patch.reminderRepeat;
+    }
+    if (patch.reminderUntil !== undefined) {
+      if (patch.reminderUntil === null || patch.reminderUntil === "") delete fm.reminder_until;
+      else fm.reminder_until = patch.reminderUntil;
+    }
+    if (patch.reminderLimit !== undefined) {
+      if (patch.reminderLimit === null || patch.reminderLimit <= 0) delete fm.reminder_limit;
+      else fm.reminder_limit = patch.reminderLimit;
+    }
+    if (patch.reminderDone !== undefined) {
+      if (patch.reminderDone <= 0) delete fm.reminder_done;
+      else fm.reminder_done = patch.reminderDone;
+    }
+    if (patch.order !== undefined) {
+      if (patch.order === null || !Number.isFinite(patch.order)) delete fm.order;
+      else fm.order = patch.order;
+    }
+  });
+}
+
+/**
+ * Applies labels to a note via processFrontMatter, preserving all other
+ * frontmatter fields and the body. Only the `jotdrop_labels` field is
+ * touched. YAML serialization may normalize the tag-block representation.
+ */
+export async function applyLabels(app: App, file: TFile, labels: string[]): Promise<void> {
+  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+    const cleaned = readLabels(labels);
+    if (cleaned.length === 0) delete fm.jotdrop_labels;
+    else fm.jotdrop_labels = cleaned;
   });
 }
 
@@ -172,6 +294,36 @@ export function formatReminderShort(reminder: string | null, now: number = Date.
 }
 
 /**
+ * Short localized label for a `reminder_repeat` value, used by the card's
+ * repeat indicator badge. Returns "" for an empty or invalid value.
+ */
+export function formatRepeatShort(repeat: string | null): string {
+  if (!repeat) return "";
+  const spec = parseRepeat(repeat);
+  if (!spec) return "";
+  switch (spec.type) {
+    case "daily":
+      return t("repeat_daily");
+    case "weekly":
+      return t("repeat_weekly");
+    case "monthly":
+      return t("repeat_monthly");
+    case "yearly":
+      return t("repeat_yearly");
+    case "every": {
+      const unit = spec.every?.unit ?? "days";
+      const unitKey = unit === "days" ? "repeat_unit_days" : unit === "weeks" ? "repeat_unit_weeks" : "repeat_unit_months";
+      return `${t("repeat_every")} ${spec.every?.n ?? 1} ${t(unitKey)}`;
+    }
+    case "ordinal": {
+      const k = spec.ordinal?.k ?? 1;
+      const wd = spec.ordinal?.weekday ?? 1;
+      return `${t(`ordinal_${k}`)} ${t(`weekday_${wd}`)}`;
+    }
+  }
+}
+
+/**
  * Returns all known tags in the vault as a sorted list (for autocomplete).
  */
 export function getAllVaultTags(app: App): string[] {
@@ -194,25 +346,20 @@ export function stripFrontmatter(content: string): string {
  * them as tags. `#fyp` → `\#fyp`. In reading view it still renders as `#fyp`,
  * but graph view and tag pane stay clean.
  *
- * Operates outside code fences and inline code. Skips heading markers (`# Title`),
- * wiki-link anchors (`[[Note#Heading]]`) and URL anchors (`example.com#x`)
- * via lookbehind on `[\\\w/]`. Running it non-idempotently is safe: already-escaped
- * `\#` does not match again.
+ * Operates outside code fences (of any length), inline code, wiki links, link
+ * targets and bare URLs. Like Obsidian, a tag may hold any letter and must not be
+ * only digits (`#16` stays). Skips heading markers (`# Title`) and anchors after a
+ * word (`example.com#x`). Running it twice is safe: `\#` does not match again.
  */
 export function neutralizeInlineHashtags(text: string): string {
-  const fenceParts = text.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
-  return fenceParts
-    .map((part, i) => {
-      if (i % 2 === 1) return part;
-      return part
-        .split(/(`[^`\n]+`)/g)
-        .map((seg, j) => {
-          if (j % 2 === 1) return seg;
-          return seg.replace(/(?<![\\\w/])#([A-Za-z_/][\w/-]*)/g, "\\#$1");
-        })
-        .join("");
-    })
-    .join("");
+  const skipped = /(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`|\[\[[^\]\n]*\]\]|\]\([^)\n]*\)|https?:\/\/[^\s<>]+/g;
+  const hashtag = /(?<![\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
+  let out = "", at = 0;
+  for (const match of text.matchAll(skipped)) {
+    out += text.slice(at, match.index).replace(hashtag, "\\#") + match[0];
+    at = match.index + match[0].length;
+  }
+  return out + text.slice(at).replace(hashtag, "\\#");
 }
 
 /**
@@ -242,6 +389,54 @@ export function checklistToGlyphs(text: string): string {
     .replace(/^([ \t]*)-[ \t]+\[[xX]\]([ \t]|$)/gm, "$1☑$2")
     .replace(/^([ \t]*)[-*+][ \t]+/gm, "$1• ")
     .replace(/^([ \t]*)(\d{1,9})[.)][ \t]+/gm, "$1$2. ");
+}
+
+/**
+ * Turns note Markdown into plain card text: drops code-fence lines, rules,
+ * table separator rows and quote/callout markers, joins table cells with " · ",
+ * and removes emphasis, highlight, inline-code, `<br>` and escape marks. Lines
+ * inside a code fence keep their text. Links, wikilinks and list markers stay
+ * for `checklistToGlyphs` and `renderInlinePreview`.
+ */
+export function plainPreviewText(text: string): string {
+  const lines: string[] = [];
+  let fence = "";
+  for (const line of text.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = "";
+      continue;
+    }
+    if (fence) { lines.push(line); continue; }
+    if (/^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) continue;
+    if (/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)) continue;
+    // A quoted checklist keeps its `>`: toggleChecklistItem does not count it, so it must not become a checkbox.
+    const unquoted = line.replace(/^(?:\s{0,3}>[ \t]?)+/, "");
+    const plain = (unquoted !== line && /^\s*[-*+][ \t]+\[[ xX]\]/.test(unquoted) ? line : unquoted).replace(/^\[![\w-]+\][+-]?[ \t]*/, "");
+    if (/^\s*\|.*\|\s*$/.test(plain)) {
+      const cells = (plain.match(/(?:\\.|[^|\\])+/g) ?? []).map((cell) => cell.trim()).filter(Boolean);
+      lines.push(cells.map(stripInlineMarks).join(" · "));
+    } else {
+      lines.push(stripInlineMarks(plain));
+    }
+  }
+  return lines.join("\n");
+}
+
+function stripInlineMarks(text: string): string {
+  return text.replace(
+    /\\([!-/:-@[-`{-~])|(`+)([^`\n]+?)\2|(\*{3}|_{3}|\*\*|__|~~|==)(?=\S)(.*?\S)\4|(^|[^\w*])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?!\*)|(^|[^\w_])_(?=[^\s_])([^_\n]*?[^\s_])_(?!\w)|<br\s*\/?>/gi,
+    (_whole, escaped?: string, _ticks?: string, code?: string, _strong?: string, strongText?: string,
+      starLead?: string, starText?: string, underLead?: string, underText?: string) => {
+      if (escaped !== undefined) return escaped;
+      if (code !== undefined) return code;
+      if (strongText !== undefined) return stripInlineMarks(strongText);
+      if (starText !== undefined) return `${starLead ?? ""}${stripInlineMarks(starText)}`;
+      if (underText !== undefined) return `${underLead ?? ""}${stripInlineMarks(underText)}`;
+      return " ";
+    },
+  );
 }
 
 /**

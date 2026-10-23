@@ -64,6 +64,10 @@ jobs:
         working-directory: .
         run: npm run build
 
+      - name: Verify integrated plugin features
+        working-directory: .
+        run: npm run check:integration
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -81,9 +85,10 @@ jobs:
         working-directory: .
         run: npm run verify:tag -- "${GITHUB_REF_NAME}"
 
-      - name: Validate Android compilation on pull request
+      - name: Validate Android R8 test release on pull request
         if: github.event_name == 'pull_request'
-        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+        working-directory: .
+        run: npm run android:test-release
 
       - name: Verify release source
         if: github.event_name != 'pull_request'
@@ -128,6 +133,22 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" android/artifacts/jotdrop.apk android/artifacts/plugin/main.js android/artifacts/plugin/manifest.json android/artifacts/plugin/styles.css android/artifacts/BUILD-INFO.txt --verify-tag --generate-notes --latest
           fi
 
+      - name: Stage unchanged upstream Android for the combined release
+        if: ${{ startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work/upstream-android android/app/build/outputs/apk/release
+          gh release download v0.28.24 --repo Diexar-Labs/jotdrop --pattern jotdrop.apk --pattern BUILD-INFO.txt --dir work/upstream-android
+          expected=$(gh api repos/Diexar-Labs/jotdrop/releases/tags/v0.28.24 --jq '.assets[] | select(.name == "jotdrop.apk") | .digest')
+          test "${expected%%:*}" = sha256
+          echo "${expected#sha256:}  work/upstream-android/jotdrop.apk" | sha256sum --check
+          cp work/upstream-android/jotdrop.apk android/app/build/outputs/apk/release/app-release.apk
+          npm run android:verify -- android/app/build/outputs/apk/release/app-release.apk
+          mv work/upstream-android/BUILD-INFO.txt work/upstream-android/ANDROID-BUILD-INFO.txt
+          node scripts/write-build-info.mjs work/upstream-android/BUILD-INFO.txt
+
       - name: Publish Obsidian plugin release
         if: ${{ startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/v') }}
         working-directory: .
@@ -135,8 +156,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" main.js manifest.json styles.css --clobber
-            gh release edit "${GITHUB_REF_NAME}" --latest=false
+            gh release upload "${GITHUB_REF_NAME}" main.js manifest.json styles.css work/upstream-android/jotdrop.apk work/upstream-android/BUILD-INFO.txt work/upstream-android/ANDROID-BUILD-INFO.txt --clobber
+            gh release edit "${GITHUB_REF_NAME}" --title "JotDrop 0.28.24" --notes-file docs/releases/0.21.2.md --latest
           else
-            gh release create "${GITHUB_REF_NAME}" main.js manifest.json styles.css --verify-tag --generate-notes --latest=false
+            gh release create "${GITHUB_REF_NAME}" main.js manifest.json styles.css work/upstream-android/jotdrop.apk work/upstream-android/BUILD-INFO.txt work/upstream-android/ANDROID-BUILD-INFO.txt --verify-tag --title "JotDrop 0.28.24" --notes-file docs/releases/0.21.2.md --latest
           fi

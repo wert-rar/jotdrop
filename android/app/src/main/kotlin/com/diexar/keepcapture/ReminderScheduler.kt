@@ -54,19 +54,36 @@ object ReminderScheduler {
     }
 
     /**
-     * Plant alle reminders die in de vault staan opnieuw. Door BootReceiver
-     * aangeroepen zodat reminders een reboot overleven (AlarmManager wist alle
-     * alarms bij boot).
+     * Plant alle reminders die in de vault staan opnieuw. BootReceiver doet dit
+     * na reboot (AlarmManager wist dan de alarms); de lijst doet het ook bij
+     * openen of handmatig verversen, voor via sync gewijzigde reminders.
+     *
+     * Een herhalende reminder die inmiddels overdue is, vuurt één keer en
+     * schuift dan door naar de eerste occurrence in de toekomst (ipv. één
+     * notificatie per gemist moment). Eerst wordt gecontroleerd of de reeks al
+     * verlopen is (done >= limit, of opgeslagen datum voorbij until) — dan
+     * wordt de reeks gewist zonder te vuren. One-shot overdue reminders blijven
+     * bestaand gedrag: overgeslagen.
      */
-    fun rescheduleAll(context: Context) {
-        val notes = Storage.listNotes(context).getOrNull() ?: return
+    suspend fun rescheduleAll(context: Context, loadedNotes: List<NoteSummary>? = null): Boolean {
+        val notes = loadedNotes ?: Storage.listNotes(context).getOrNull() ?: return false
         val now = System.currentTimeMillis()
+        var changed = false
         for (note in notes) {
             val reminder = note.meta.reminder ?: continue
             val whenMillis = parseToEpochMillis(reminder) ?: continue
-            if (whenMillis <= now) continue
-            schedule(context, note.uri, reminder)
+            if (whenMillis > now) {
+                schedule(context, note.uri, reminder)
+            } else if (note.meta.reminderRepeat != null) {
+                changed = true
+                if (ReminderRecurrence.isExpired(note.meta)) {
+                    ReminderEngine.expire(context, note.uri)
+                } else {
+                    ReminderEngine.fireAndAdvance(context, note.uri)
+                }
+            }
         }
+        return changed
     }
 
     private fun buildIntent(context: Context, noteUri: Uri): Intent {

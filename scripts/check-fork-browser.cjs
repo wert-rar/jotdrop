@@ -46,6 +46,7 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
         const el = document.createElement(tag);
         if (options.cls) el.className = options.cls;
         if (options.text) el.textContent = options.text;
+        if (options.value !== undefined) el.value = options.value;
         for (const [key, value] of Object.entries(options.attr || {})) el.setAttribute(key, value);
         this.appendChild(el); return el;
       };
@@ -153,11 +154,12 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       const metadata = new Map(files.map(file => [file, { pinned:file.basename === 'Pinned', tags:['reading'], color:'default' }]));
       const text = new Map(files.map(file => [file, '# ' + file.basename + '\n\n**bold**\n\n- [ ] task']));
       const writes = [];
+      const folders = new Set(['Grail', 'Grail/Archive']);
       const app = {
         metadataCache: {getFileCache: file => ({frontmatter: metadata.get(file)}),getTags:()=>({})},
         vault: {
           getMarkdownFiles:()=>files, cachedRead:async file=>'---\n'+JSON.stringify(metadata.get(file))+'\n---\n'+text.get(file), read:async file=>text.get(file),
-          getAbstractFileByPath:()=>({}), createFolder:async()=>{},
+          getAbstractFileByPath:path=>files.find(file=>file.path===path)||(folders.has(path)?{}:null), createFolder:async path=>{folders.add(path);},
           modify:async(file,value)=>text.set(file,value), process:async(file,callback)=>{const value=callback(text.get(file));text.set(file,value);if(plugin.suppressedPaths.has(file.path)){plugin.cardsVersion++;for(const board of boards)board.invalidateCards({kind:'files',paths:[file.path]});plugin.suppressedPaths.delete(file.path);}else plugin.refreshViews({kind:'files',paths:[file.path]});return value;}
         },
         fileManager: {
@@ -1065,6 +1067,35 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
       assert(createdEditor.destroyed, 'new-note save closes and releases editor');
       app.vault.create = originalCreate; app.vault.getAbstractFileByPath = originalAbstractFile;
       const display=new fixtureClasses.EditModal(app,plugin,files[1]);await display.onOpen();
+      const recurring = new window.module.exports.EditNoteModal(app, plugin, files[0]);
+      metadata.get(files[0]).reminder = '2026-12-01T10:00';
+      metadata.get(files[0]).reminder_repeat = 'weekly:1,3';
+      await recurring.onOpen();
+      const reminderPopup = recurring.modalEl.querySelector('.jotdrop-reminder-popup');
+      reminderPopup.open = true;
+      assert(!!reminderPopup.querySelector('.jotdrop-repeat-controls select'), 'repeat picker stays inside the compact reminder popover');
+      assert(!!recurring.modalEl.querySelector('.jotdrop-editor-label-button'), 'existing note editor exposes the compact labels picker');
+      window.upstreamReminderHTML = recurring.modalEl.outerHTML;
+      recurring.close();
+      const labelledCapture = new window.module.exports.QuickCaptureModal(app, plugin);
+      await labelledCapture.onOpen();
+      labelledCapture.state.labels = ['Work', 'Ideas'];
+      labelledCapture.renderLabelChips();
+      const labelPopup = labelledCapture.modalEl.querySelector('.jotdrop-label-popup');
+      labelPopup.open = true;
+      assert(!!labelPopup.querySelector('.jotdrop-edit-taginput'), 'capture labels input lives in its compact popover');
+      assert(labelPopup.querySelectorAll('.jotdrop-edit-chip').length === 2, 'label popover retains the selected labels');
+      window.upstreamLabelsHTML = labelledCapture.modalEl.outerHTML;
+      labelledCapture.close();
+      const inlineCard = {...cards[0],meta:{...cards[0].meta,tags:[],inlineTags:['bodytag'],labels:['Work']}};
+      view.query = 'bodytag'; view.excludedTags.clear(); view.hideUntagged = false; view.selectedLabels.clear();
+      assert(view.matchesFilters(inlineCard), 'inline hashtags participate in search');
+      view.excludedTags.add('bodytag');
+      assert(!view.matchesFilters(inlineCard), 'excluded inline hashtags hide the card');
+      view.query=''; view.excludedTags.clear(); view.selectedLabels.add('Work');
+      assert(view.matchesFilters(inlineCard), 'labels compose with existing tag visibility');
+      view.selectedLabels.clear(); view.selectedLabels.add('Other');
+      assert(!view.matchesFilters(inlineCard), 'unmatched label filters hide the card');
       return { checks, notices, writes:writes.length };
     }, {tagPerformanceOnly,tagRenderOnly,dragRefreshOnly,dragWindowOnly,sampleMarkdown});
     if (dragWindowOnly) {
@@ -1138,6 +1169,10 @@ const sampleMarkdown = sampleRoot ? readSamples(sampleRoot).sort((a,b)=>b.mtime-
     await page.screenshot({ path: 'work/verification/masonry-preview.png', fullPage: true });
     await page.evaluate(() => { document.body.innerHTML = window.tagVisibilityPreviewHTML; });
     await page.screenshot({ path: 'work/verification/tag-visibility-preview.png', fullPage: true });
+    await page.evaluate(() => { document.body.innerHTML = window.upstreamReminderHTML; });
+    await page.screenshot({ path: 'work/verification/upstream-reminder-preview.png', fullPage: true });
+    await page.evaluate(() => { document.body.innerHTML = window.upstreamLabelsHTML; });
+    await page.screenshot({ path: 'work/verification/upstream-labels-preview.png', fullPage: true });
     assert.equal(result.notices.some(message=>message.startsWith('JotDrop:')),false);
     console.log(`PASS: ${result.checks} browser integration checks (mock Obsidian services; real bundle, DOM and CSS).`);
     console.log('PASS: real browser mouse drag into an empty column (trusted dragstart and drop events).');

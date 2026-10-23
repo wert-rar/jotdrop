@@ -11,6 +11,7 @@ function generateToken(): string {
 
 export type SortMode = "manual" | "modified-desc" | "modified-asc" | "created-desc" | "created-asc" | "title-asc";
 
+
 export interface JotDropSettings {
   notesFolder: string;
   archiveFolder: string;
@@ -39,13 +40,19 @@ export interface JotDropSettings {
    * choice of "modified-desc" by the user.
    */
   sortMigratedToCreated: boolean;
+  /**
+   * Locally persisted label names that have no notes yet (empty collection).
+   * Discovery for the menu comes only from `jotdrop_labels` in managed
+   * folders; these persist separately so empty collections survive reloads.
+   */
+  localLabels: string[];
 }
 
 export const DEFAULT_SETTINGS: JotDropSettings = {
   notesFolder: "Mini Notes",
   archiveFolder: "Mini Notes/Archive",
   assetsFolder: "",
-  sortMode: "created-desc",
+  sortMode: "manual",
   cardWidth: 240,
   showArchived: false,
   downloadImages: true,
@@ -53,6 +60,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerPort: 27124,
   clipServerToken: "",
   sortMigratedToCreated: false,
+  localLabels: [],
 };
 
 export class JotDropSettingTab extends PluginSettingTab {
@@ -201,6 +209,30 @@ export class JotDropSettingTab extends PluginSettingTab {
           this.plugin.settings.downloadImages = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings_import_keep"))
+      .setDesc(t("settings_import_keep_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_keep_button")).onClick(() => this.plugin.importFromKeep())
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings_import_markdown"))
+      .setDesc(t("settings_import_markdown_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_markdown_files")).onClick(() => this.plugin.importMarkdown())
+      )
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_markdown_folder")).onClick(() => this.plugin.importMarkdown(true))
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings_import_evernote"))
+      .setDesc(t("settings_import_evernote_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_evernote_button")).onClick(() => this.plugin.importFromEvernote())
       );
 
     // Chrome-extension clip server — deliberately below the basics; not everyone
