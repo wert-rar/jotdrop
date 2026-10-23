@@ -28,7 +28,7 @@ Cards preserve paragraphs, nested lists, links, code blocks, and embeds using Ob
 
 ## Install
 
-Download the plugin files or ZIP from [the latest plugin release](https://github.com/wert-rar/jotdrop/releases/tag/0.20.5). Copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/jotdrop/`, then reload Obsidian and enable JotDrop under Community plugins.
+Download `main.js`, `manifest.json`, and `styles.css` from [JotDrop 0.28.24 (plugin 0.21.2)](https://github.com/wert-rar/jotdrop/releases/tag/0.21.2). Copy them into `<vault>/.obsidian/plugins/jotdrop/`, then reload Obsidian and enable JotDrop under Community plugins. See [CHANGELOG.md](CHANGELOG.md) for the changes.
 
 This fork keeps the original plugin ID, so installing it replaces the original JotDrop in that vault. Existing plugin settings stay in the same folder.
 
