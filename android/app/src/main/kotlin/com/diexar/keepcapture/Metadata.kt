@@ -69,10 +69,28 @@ data class NoteMeta(
     val color: NoteColor = NoteColor.DEFAULT,
     val tags: List<String> = emptyList(),
     val pinned: Boolean = false,
+    // Handmatige volgorde: `order` is een eindig getal dat oplopend sorteert.
+    // Afwezig → rang = -noteCreatedMs (nieuwe notities bovenaan).
+    val order: Double? = null,
     // ISO-string in lokale tijd zonder timezone-suffix, bv. "2026-05-14T14:30".
     // Wordt door ReminderScheduler omgezet naar epoch millis voor AlarmManager.
     val reminder: String? = null,
-)
+    // Herhaling: "daily" | "weekly:1,3,5" (ISO 1=ma..7=zo) | "monthly" |
+    // "yearly" | "every:N:days|weeks|months" | "ordinal:K:weekday" (K=5 → laatste).
+    val reminderRepeat: String? = null,
+    // Einddatum "YYYY-MM-DD" (inclusief); na deze datum vervalt de reeks.
+    val reminderUntil: String? = null,
+    // Totaal aantal keren dat de reminder mag afgaan (positief geheel getal).
+    val reminderLimit: Int? = null,
+    // Aantal keren al afgegaan (niet-negatief, door de engine bijgehouden).
+    val reminderDone: Int = 0,
+    val labels: List<String> = emptyList(),
+    // `#hashtags` uit de body, zoals Obsidian ze telt. Alleen tonen en filteren;
+    // de editor en FrontmatterWriter gebruiken uitsluitend `tags`.
+    val inlineTags: List<String> = emptyList(),
+) {
+    val allTags: List<String> get() = tags + inlineTags
+}
 
 data class ParsedNote(
     val meta: NoteMeta,
@@ -95,20 +113,27 @@ object FrontmatterParser {
     fun parse(content: String): ParsedNote {
         val match = frontmatterRegex.find(content)
         if (match == null) {
-            return ParsedNote(NoteMeta(), content, "")
+            return ParsedNote(NoteMeta(inlineTags = InlineTags.find(content)), content, "")
         }
         val yaml = match.groupValues[1]
         val body = content.substring(match.range.last + 1)
         val meta = parseMeta(yaml)
-        return ParsedNote(meta, body, match.value)
+        return ParsedNote(meta.copy(inlineTags = InlineTags.find(body, meta.tags)), body, match.value)
     }
 
     private fun parseMeta(yaml: String): NoteMeta {
         var color = NoteColor.DEFAULT
         var pinned = false
+        var order: Double? = null
         var reminder: String? = null
+        var reminderRepeat: String? = null
+        var reminderUntil: String? = null
+        var reminderLimit: Int? = null
+        var reminderDone = 0
         val tags = mutableListOf<String>()
         val seen = mutableSetOf<String>()
+        val labels = mutableListOf<String>()
+        val seenLabels = mutableSetOf<String>()
 
         val lines = yaml.split('\n')
         var i = 0
@@ -131,11 +156,32 @@ object FrontmatterParser {
             when (key.lowercase()) {
                 "color" -> color = NoteColor.fromKey(unquote(rawValue))
                 "pinned" -> pinned = parseBool(rawValue)
+                "order" -> {
+                    val v = unquote(rawValue).trim().toDoubleOrNull()
+                    if (v != null && v.isFinite()) order = v
+                }
                 "reminder" -> {
                     val v = unquote(rawValue).trim()
                     if (v.isNotEmpty()) reminder = v
                 }
-                "tags" -> {
+                "reminder_repeat" -> {
+                    val v = unquote(rawValue).trim()
+                    if (v.isNotEmpty()) reminderRepeat = v
+                }
+                "reminder_until" -> {
+                    val v = unquote(rawValue).trim()
+                    if (v.isNotEmpty()) reminderUntil = v
+                }
+                "reminder_limit" -> {
+                    reminderLimit = unquote(rawValue).trim().toIntOrNull()?.takeIf { it > 0 }
+                }
+                "reminder_done" -> {
+                    reminderDone = unquote(rawValue).trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
+                }
+                "tags", "jotdrop_labels" -> {
+                    val isTag = key.equals("tags", true)
+                    val values = if (isTag) tags else labels
+                    val seenValues = if (isTag) seen else seenLabels
                     if (rawValue.isEmpty()) {
                         // Block-style list — kijk naar volgende '- value' regels
                         var j = i + 1
@@ -144,7 +190,7 @@ object FrontmatterParser {
                             val nextTrim = next.trim()
                             if (nextTrim.startsWith("- ")) {
                                 val v = unquote(nextTrim.substring(2).trim())
-                                if (v.isNotBlank()) addUnique(tags, seen, v)
+                                if (v.isNotBlank()) addUnique(values, seenValues, v, isTag)
                                 j++
                             } else if (nextTrim.isEmpty()) {
                                 j++
@@ -158,20 +204,33 @@ object FrontmatterParser {
                         val inner = rawValue.substring(1, rawValue.length - 1)
                         for (part in splitInlineList(inner)) {
                             val v = unquote(part.trim())
-                            if (v.isNotBlank()) addUnique(tags, seen, v)
+                            if (v.isNotBlank()) addUnique(values, seenValues, v, isTag)
                         }
-                    } else {
+                    } else if (isTag) {
                         // Comma- of whitespace-separated string
                         for (part in rawValue.split(Regex("[,\\s]+"))) {
                             val v = unquote(part.trim())
                             if (v.isNotBlank()) addUnique(tags, seen, v)
                         }
+                    } else {
+                        addUnique(labels, seenLabels, unquote(rawValue), false)
                     }
                 }
             }
             i++
         }
-        return NoteMeta(color = color, tags = tags.toList(), pinned = pinned, reminder = reminder)
+        return NoteMeta(
+            color = color,
+            tags = tags.toList(),
+            pinned = pinned,
+            order = order,
+            reminder = reminder,
+            reminderRepeat = reminderRepeat,
+            reminderUntil = reminderUntil,
+            reminderLimit = reminderLimit,
+            reminderDone = reminderDone,
+            labels = labels.toList(),
+        )
     }
 
     private fun parseBool(value: String): Boolean {
@@ -184,7 +243,9 @@ object FrontmatterParser {
             val first = value.first()
             val last = value.last()
             if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
-                return value.substring(1, value.length - 1)
+                val inner = value.substring(1, value.length - 1)
+                return if (first == '"') inner.replace(Regex("\\\\([\\\\\"])")) { it.groupValues[1] }
+                else inner.replace("''", "'")
             }
         }
         return value
@@ -197,7 +258,18 @@ object FrontmatterParser {
         val parts = mutableListOf<String>()
         val sb = StringBuilder()
         var quote: Char? = null
+        var escaped = false
         for (ch in input) {
+            if (escaped) {
+                sb.append(ch)
+                escaped = false
+                continue
+            }
+            if (quote == '"' && ch == '\\') {
+                sb.append(ch)
+                escaped = true
+                continue
+            }
             when {
                 quote == null && (ch == '"' || ch == '\'') -> { quote = ch; sb.append(ch) }
                 quote == ch -> { quote = null; sb.append(ch) }
@@ -209,8 +281,8 @@ object FrontmatterParser {
         return parts.map { it.trim() }.filter { it.isNotEmpty() }
     }
 
-    private fun addUnique(target: MutableList<String>, seen: MutableSet<String>, value: String) {
-        val clean = value.removePrefix("#").trim()
+    private fun addUnique(target: MutableList<String>, seen: MutableSet<String>, value: String, isTag: Boolean = true) {
+        val clean = (if (isTag) value.removePrefix("#") else value).trim()
         if (clean.isEmpty()) return
         val k = clean.lowercase()
         if (seen.add(k)) target.add(clean)
@@ -230,7 +302,13 @@ object FrontmatterWriter {
      * blijven, gewijzigde keys worden bijgewerkt, en lege waardes worden
      * verwijderd.
      */
-    fun apply(content: String, meta: NoteMeta): String {
+    fun apply(content: String, meta: NoteMeta, labels: List<String>? = null): String =
+        write(content, meta, labels, labelsOnly = false)
+
+    fun applyLabels(content: String, labels: List<String>): String =
+        write(content, NoteMeta(), labels, labelsOnly = true)
+
+    private fun write(content: String, meta: NoteMeta, labels: List<String>?, labelsOnly: Boolean): String {
         val parsed = FrontmatterParser.parse(content)
         val existingLines = if (parsed.frontmatter.isNotEmpty()) {
             extractYamlLines(parsed.frontmatter)
@@ -239,7 +317,10 @@ object FrontmatterWriter {
         }
 
         val newLines = mutableListOf<String>()
-        val handled = setOf("color", "tags", "pinned", "reminder")
+        val handled = if (labelsOnly) setOf("jotdrop_labels") else setOf(
+            "color", "tags", "pinned", "order", "reminder",
+            "reminder_repeat", "reminder_until", "reminder_limit", "reminder_done",
+        ) + if (labels != null) setOf("jotdrop_labels") else emptySet()
 
         // Bewaar onbekende keys in originele volgorde, sla blocks voor handled keys over.
         var i = 0
@@ -273,21 +354,42 @@ object FrontmatterWriter {
         }
 
         // Voeg onze velden achteraan toe (alleen als niet default/leeg).
-        if (meta.pinned) {
-            newLines.add("pinned: true")
+        if (!labelsOnly) {
+            if (meta.pinned) {
+                newLines.add("pinned: true")
+            }
+            if (meta.order != null) {
+                newLines.add("order: ${formatOrder(meta.order)}")
+            }
+            if (meta.color != NoteColor.DEFAULT) {
+                newLines.add("color: ${meta.color.key}")
+            }
+            if (meta.tags.isNotEmpty()) {
+                val flat = meta.tags.joinToString(", ") { yamlScalar(it) }
+                newLines.add("tags: [${flat}]")
+            }
+            if (!meta.reminder.isNullOrBlank()) {
+                newLines.add("reminder: ${yamlScalar(meta.reminder)}")
+                if (!meta.reminderRepeat.isNullOrBlank()) {
+                    newLines.add("reminder_repeat: ${yamlScalar(meta.reminderRepeat)}")
+                }
+                if (!meta.reminderUntil.isNullOrBlank()) {
+                    // Quote dates so Obsidian reads strings, not Date objects.
+                    newLines.add("reminder_until: ${yamlString(meta.reminderUntil)}")
+                }
+                if (meta.reminderLimit != null && meta.reminderLimit > 0) {
+                    newLines.add("reminder_limit: ${meta.reminderLimit}")
+                }
+                if (meta.reminderDone > 0) {
+                    newLines.add("reminder_done: ${meta.reminderDone}")
+                }
+            }
         }
-        if (meta.color != NoteColor.DEFAULT) {
-            newLines.add("color: ${meta.color.key}")
+        // Only explicit collection edits touch memberships; ordinary metadata edits preserve them.
+        if (!labels.isNullOrEmpty()) {
+            newLines.add("jotdrop_labels: [${labels.joinToString(", ") { yamlString(it) }}]")
         }
-        if (meta.tags.isNotEmpty()) {
-            val flat = meta.tags.joinToString(", ") { yamlScalar(it) }
-            newLines.add("tags: [${flat}]")
-        }
-        if (!meta.reminder.isNullOrBlank()) {
-            newLines.add("reminder: ${yamlScalar(meta.reminder)}")
-        }
-
-        val body = parsed.body.removePrefix("\n")
+        val body = if (labelsOnly) parsed.body else parsed.body.removePrefix("\n")
         return if (newLines.isEmpty()) {
             body
         } else {
@@ -323,6 +425,19 @@ object FrontmatterWriter {
             "\"" + value.replace("\"", "\\\"") + "\""
         } else {
             value
+        }
+    }
+
+    /** Forceert dubbele quotes (voor datum-achtige scalars die YAML als Date zou parsen). */
+    private fun yamlString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    /** Schrijft een eindig Double als schone decimale scalar (nooit scientific notation). */
+    private fun formatOrder(value: Double): String {
+        if (!value.isFinite()) return "0"
+        return if (value == Math.floor(value) && Math.abs(value) < 9e15) {
+            value.toLong().toString()
+        } else {
+            java.math.BigDecimal.valueOf(value).toPlainString()
         }
     }
 }

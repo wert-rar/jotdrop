@@ -1,14 +1,18 @@
 package com.diexar.keepcapture
 
 import android.content.Intent
+import android.content.ActivityNotFoundException
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
 import com.diexar.keepcapture.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -33,6 +37,19 @@ class MainActivity : AppCompatActivity() {
 
         binding.pickVaultButton.setOnClickListener {
             pickVaultLauncher.launch(null)
+        }
+        binding.reminderSoundButton.setOnClickListener {
+            val channelId = ReminderReceiver.ensureChannel(this)
+            try {
+                startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+                })
+            } catch (_: ActivityNotFoundException) {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                })
+            }
         }
 
         binding.saveSubfolderButton.setOnClickListener {
@@ -63,6 +80,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.kofiButton.setOnClickListener {
             openExternalUrl("https://ko-fi.com/L3L11ZETB9")
+        }
+        binding.privacyButton.setOnClickListener {
+            openExternalUrl("https://github.com/Diexar-Labs/jotdrop/blob/main/docs/android-privacy-policy.md")
         }
 
         setupSpeechLangSpinner()
@@ -110,7 +130,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateStatusBarAppearance()
         updateUi()
+    }
+
+    private fun updateStatusBarAppearance() {
+        val isDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !isDark
     }
 
     private fun updateUi() {

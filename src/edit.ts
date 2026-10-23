@@ -3,13 +3,14 @@ import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
 import { voidAsync } from "./asyncUtil";
+import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import {
   colorLabel,
   COLOR_NAMES,
   ColorName,
   getAllVaultTags,
-  neutralizeInlineHashtags,
   readMeta,
   stripFrontmatter,
   updateMeta,
@@ -46,6 +47,9 @@ interface EditableNote {
   tags: string[];
   pinned: boolean;
   reminder: string | null;
+  reminderRepeat: string | null;
+  reminderUntil: string | null;
+  reminderLimit: number | null;
 }
 
 /**
@@ -73,6 +77,8 @@ export class EditNoteModal extends Modal {
   private touchStartX: number | null = null;
   private touchStartY: number | null = null;
   private touchOnTextField = false;
+  private cleanupKeyboard: (() => void) | null = null;
+  private cleanupListEditor: (() => void) | null = null;
 
   constructor(
     app: App,
@@ -90,6 +96,7 @@ export class EditNoteModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass("jotdrop-edit-modal");
+    this.cleanupKeyboard = keepModalAboveKeyboard(this);
     this.registerNavHandlers();
     await this.loadNote(this.file);
   }
@@ -117,6 +124,9 @@ export class EditNoteModal extends Modal {
       tags: [...meta.tags],
       pinned: meta.pinned,
       reminder: meta.reminder,
+      reminderRepeat: meta.reminderRepeat,
+      reminderUntil: meta.reminderUntil,
+      reminderLimit: meta.reminderLimit,
     };
     this.originalTitle = title;
     this.originalBody = body;
@@ -224,6 +234,7 @@ export class EditNoteModal extends Modal {
 
   private buildLayout(): void {
     const root = this.contentEl;
+    this.cleanupListEditor?.();
     root.empty();
 
     this.renderNavHeader(root);
@@ -384,6 +395,11 @@ export class EditNoteModal extends Modal {
     clearReminder.addEventListener("click", voidAsync(async () => {
       reminderInput.value = "";
       this.state.reminder = null;
+      this.state.reminderRepeat = null;
+      this.state.reminderUntil = null;
+      this.state.reminderLimit = null;
+      // Re-render so the repeat picker resets to "None" too.
+      this.renderControls(parent);
       try {
         await updateMeta(this.app, this.file, { reminder: null });
         this.plugin.refreshViews({ kind: "files", paths: [this.file.path] });
@@ -391,6 +407,8 @@ export class EditNoteModal extends Modal {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
     }));
+
+    this.renderRepeatControls(parent);
 
     // Tags + chip input — input lives inside the chips container so it always
     // follows the last chip, even when chips wrap to a new line.
@@ -447,6 +465,41 @@ export class EditNoteModal extends Modal {
     this.tagInputEl.addEventListener("blur", () => commit());
   }
 
+  /**
+   * Renders the repeat picker bound to the current state. Every change persists
+   * immediately (same as color/pin), matching the live-edit feel of the modal.
+   */
+  private renderRepeatControls(parent: HTMLElement): void {
+    const wrap = parent.createDiv({ cls: "jotdrop-repeat-controls" });
+    const editor = new RepeatEditor(
+      wrap,
+      {
+        repeat: this.state.reminderRepeat ?? "",
+        until: this.state.reminderUntil,
+        limit: this.state.reminderLimit,
+      },
+      () => {
+        const cfg = editor.getConfig();
+        this.state.reminderRepeat = cfg.repeat || null;
+        this.state.reminderUntil = cfg.until;
+        this.state.reminderLimit = cfg.limit;
+        void (async () => {
+          try {
+            await updateMeta(this.app, this.file, {
+              reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+              reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+              reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
+            });
+            this.plugin.refreshViews();
+          } catch (err) {
+            new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+          }
+        })();
+      },
+    );
+    editor.render();
+  }
+
   private renderChips(): void {
     if (!this.chipsEl) return;
     this.chipsEl.empty();
@@ -474,7 +527,7 @@ export class EditNoteModal extends Modal {
     const caret = start + insert.length;
     ta.selectionStart = ta.selectionEnd = caret;
     ta.focus();
-    this.state.body = ta.value;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   /**
@@ -583,6 +636,9 @@ export class EditNoteModal extends Modal {
         tags: this.state.tags,
         pinned: this.state.pinned,
         reminder: this.state.reminder,
+        reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+        reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+        reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
       });
       if (bodyChanged) {
         // Re-read so our new frontmatter is preserved
@@ -590,9 +646,9 @@ export class EditNoteModal extends Modal {
         const fmMatch = current.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
         const fm = fmMatch ? fmMatch[0] : "";
         // Re-attach the title as the leading `# heading`; empty title → none.
+        // Hashtags the user typed or that were already in the note are kept: they are deliberate Obsidian tags.
         const merged = joinHeadingTitle(this.state.title, this.state.body, this.titleLevel);
-        const safeBody = neutralizeInlineHashtags(merged);
-        const combined = combineBodyAndEmbeds(safeBody, this.state.embedLines);
+        const combined = combineBodyAndEmbeds(merged, this.state.embedLines);
         const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
         await this.app.vault.modify(this.file, newContent);
       }
@@ -611,6 +667,10 @@ export class EditNoteModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupListEditor?.();
+    this.cleanupListEditor = null;
+    this.cleanupKeyboard?.();
+    this.cleanupKeyboard = null;
     this.contentEl.empty();
   }
 }

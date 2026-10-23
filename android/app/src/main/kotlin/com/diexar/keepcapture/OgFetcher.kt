@@ -77,7 +77,12 @@ object OgFetcher {
      * Retourneert de basenaam van de afbeelding (bv. "a3f.jpg") of null bij fout.
      */
     fun fetch(context: Context, url: String, downloadImages: Boolean = true): Result<OgPreview> {
+        if (isForbiddenTarget(url)) {
+            return Result.failure(IllegalArgumentException("Geweigerd: alleen publieke HTTPS-doelen."))
+        }
         return try {
+            var oembed: OgPreview? = null
+            var fetchUrl = rewriteForScraping(url)
             // Speciale gevallen: sites die JS-renderen en hun OG via oEmbed serveren.
             if (url.contains("tiktok.com", ignoreCase = true)) {
                 // TikTok's oEmbed accepteert alleen de canonieke `/@user/video/<id>`-URL.
@@ -87,12 +92,12 @@ object OgFetcher {
                     url.contains("vt.tiktok.com", ignoreCase = true)) {
                     resolveRedirects(url)
                 } else url
-                return fetchViaOEmbed(context, canonical, "https://www.tiktok.com/oembed?url=", downloadImages)
+                oembed = fetchViaOEmbed(context, canonical, "https://www.tiktok.com/oembed?url=", downloadImages).getOrNull()
+                if (oembed?.imageBasename != null) return Result.success(oembed)
+                fetchUrl = canonical
             }
             // Twitter/X blokkeert scrapers voor uitgelogde clients. fxtwitter.com is een mirror
             // die wél nette OG-meta serveert (gebruikt door Discord/Telegram embeds).
-            val fetchUrl = rewriteForScraping(url)
-
             // Probeer eerst met Chrome desktop UA. Als dat een 4xx geeft (Telegraaf 403't bv.)
             // óf geen image-kandidaten levert (cookie-wall HTML), retry met crawler-UAs in volgorde.
             var html: String? = null
@@ -116,15 +121,18 @@ object OgFetcher {
             }
 
             if (html == null) {
+                if (oembed != null) return Result.success(oembed)
                 return Result.failure(lastError ?: IllegalStateException("Geen HTML opgehaald"))
             }
 
             val title = extractMeta(html, "og:title")
                 ?: extractMeta(html, "twitter:title")
                 ?: extractTitleTag(html)
+                ?: oembed?.title
             val description = extractMeta(html, "og:description")
                 ?: extractMeta(html, "twitter:description")
                 ?: extractMeta(html, "description")
+                ?: oembed?.description
 
             // Probeer elke kandidaat tot er één daadwerkelijk downloadbaar is.
             // Hola Gestoría heeft bijvoorbeeld een og:image die 404't — dan vallen
@@ -367,7 +375,7 @@ object OgFetcher {
      */
     private fun isForbiddenTarget(urlString: String): Boolean {
         val url = try { URL(urlString) } catch (_: Exception) { return true }
-        if (url.protocol != "http" && url.protocol != "https") return true
+        if (url.protocol != "https") return true
         val host = url.host.lowercase().trim('[', ']')
         if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true
         if (host.contains(":")) {
@@ -384,16 +392,16 @@ object OgFetcher {
             a >= 224 // multicast/reserved
     }
 
-    private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT): Result<String> {
+    private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT, redirectsRemaining: Int = 6): Result<String> {
         if (isForbiddenTarget(urlString)) {
-            return Result.failure(IllegalArgumentException("Geweigerd: niet-publiek doel."))
+            return Result.failure(IllegalArgumentException("Geweigerd: alleen publieke HTTPS-doelen."))
         }
         val url = URL(urlString)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
-            instanceFollowRedirects = true
+            instanceFollowRedirects = false
         }
         applyBrowserHeaders(
             conn,
@@ -403,6 +411,13 @@ object OgFetcher {
         )
         return try {
             val code = conn.responseCode
+            // Every hop must pass the HTTPS and target checks again.
+            if (code in listOf(301, 302, 303, 307, 308) && redirectsRemaining > 0) {
+                val location = conn.getHeaderField("Location")
+                if (location != null) {
+                    return downloadHtml(URL(url, location).toString(), userAgent, redirectsRemaining - 1)
+                }
+            }
             if (code !in 200..299) {
                 return Result.failure(IllegalStateException("HTTP $code"))
             }
@@ -429,9 +444,9 @@ object OgFetcher {
         }
     }
 
-    private fun downloadImage(context: Context, urlString: String): Result<String> {
+    private fun downloadImage(context: Context, urlString: String, redirectsRemaining: Int = 6): Result<String> {
         if (isForbiddenTarget(urlString)) {
-            return Result.failure(IllegalArgumentException("Geweigerd: niet-publiek doel."))
+            return Result.failure(IllegalArgumentException("Geweigerd: alleen publieke HTTPS-doelen."))
         }
         val attachmentsFolder = Storage.getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
@@ -442,7 +457,7 @@ object OgFetcher {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
-            instanceFollowRedirects = true
+            instanceFollowRedirects = false
         }
         applyBrowserHeaders(
             conn,
@@ -452,6 +467,12 @@ object OgFetcher {
         )
         return try {
             val code = conn.responseCode
+            if (code in listOf(301, 302, 303, 307, 308) && redirectsRemaining > 0) {
+                val location = conn.getHeaderField("Location")
+                if (location != null) {
+                    return downloadImage(context, URL(url, location).toString(), redirectsRemaining - 1)
+                }
+            }
             if (code !in 200..299) {
                 return Result.failure(IllegalStateException("Afbeelding HTTP $code"))
             }

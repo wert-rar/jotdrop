@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('main.js', 'utf8');
-const context = vm.createContext({ module:{exports:{}}, require: name => {
+const context = vm.createContext({ TextDecoder, TextEncoder, module:{exports:{}}, require: name => {
   if(name !== 'obsidian') throw new Error('Unexpected dependency: '+name);
   class Base {}
   return {Plugin:Base,Modal:Base,SuggestModal:Base,ItemView:Base,PluginSettingTab:Base};

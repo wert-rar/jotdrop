@@ -79,7 +79,9 @@ async function checks({app, plugin, metadata, text, makeView, assert, tick}) {
     assert(oldComponents[i].every(component=>!view.children.has(component)), 'replaced card unloads its components');
   });
   reads=0;metadata.get(changed).tags=['changed-tag'];
+  const remindersBeforeMetadata = reminders;
   events['metadata:changed'](changed); await flush();
+  assert(reminders===remindersBeforeMetadata+1,'metadata changes reschedule synced recurring reminders');
   assert(reads===0 && views.every(view=>view.lastFiltered.find(card=>card.file===changed).meta.tags.includes('changed-tag')), 'metadata refresh updates tags without content reads');
   const yamlRead=app.vault.cachedRead;
   metadata.get(changed).pinned=true;
@@ -88,7 +90,7 @@ async function checks({app, plugin, metadata, text, makeView, assert, tick}) {
   assert(views.every(view=>!view.cardCache.get(changed.path).meta.pinned && view.cardCache.get(changed.path).order===Infinity),'removed frontmatter overrides stale cached pin and rank');
   metadata.get(changed).pinned=false;app.vault.cachedRead=yamlRead;
   invalidate('files',[changed.path]);await flush();
-  assert(reminders===1,'vault modification still updates reminders');
+  assert(reminders===remindersBeforeMetadata+1,'vault and metadata changes keep reminders scheduled');
   const beforeSuppression=rendered.length;
   realPlugin.suppressModifyOnce(changed.path);
   text.set(changed,'# Checkbox\n\n- [x] task');

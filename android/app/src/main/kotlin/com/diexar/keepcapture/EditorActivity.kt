@@ -17,6 +17,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.aspectRatio
@@ -53,8 +55,10 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
@@ -72,6 +76,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
@@ -79,6 +85,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -124,6 +131,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -133,11 +144,14 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import com.diexar.keepcapture.ui.JotDropTheme
 import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -148,12 +162,17 @@ class EditorActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val noteUri: Uri? = intent.getStringExtra(EXTRA_NOTE_URI)?.let(Uri::parse)
         val navUris: List<String> = intent.getStringArrayListExtra(EXTRA_NAV_URIS) ?: emptyList()
+        val thumbnail = intent.getStringExtra(EXTRA_THUMBNAIL_NAME)?.let { name ->
+            intent.getStringExtra(EXTRA_THUMBNAIL_URI)?.let { name to Uri.parse(it) }
+        }
 
         setContent {
             JotDropTheme {
                 EditorScreen(
                     initialUri = noteUri,
                     navUris = navUris,
+                    initialThumbnail = thumbnail,
+                    initialLabel = intent.getStringExtra(EXTRA_INITIAL_LABEL)?.takeIf { noteUri == null && LabelNames.validate(it) },
                     onClose = { finish() },
                 )
             }
@@ -163,21 +182,34 @@ class EditorActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_NOTE_URI = "note_uri"
         private const val EXTRA_NAV_URIS = "nav_uris"
+        private const val EXTRA_THUMBNAIL_NAME = "thumbnail_name"
+        private const val EXTRA_THUMBNAIL_URI = "thumbnail_uri"
+        private const val EXTRA_INITIAL_LABEL = "initial_label"
 
         // Intent-extra's lopen via de Binder (limiet ~500KB) en SAF-URI's zijn lang.
         // Beperk de nav-lijst daarom tot een venster rond de geopende notitie.
         private const val NAV_WINDOW = 150
 
-        fun newNoteIntent(context: Context): Intent =
-            Intent(context, EditorActivity::class.java)
+        fun newNoteIntent(context: Context, label: String? = null): Intent =
+            Intent(context, EditorActivity::class.java).putExtra(EXTRA_INITIAL_LABEL, label)
 
         /**
          * Opent een notitie in de editor. [orderedUris] is optioneel de zichtbare
          * kaartvolgorde (gepind eerst, dan de rest, met actieve filters) — daarmee
          * kan de editor met swipe/knoppen naar de vorige/volgende notitie.
          */
-        fun openNoteIntent(context: Context, uri: Uri, orderedUris: List<Uri> = emptyList()): Intent {
+        fun openNoteIntent(
+            context: Context,
+            uri: Uri,
+            orderedUris: List<Uri> = emptyList(),
+            thumbnailName: String? = null,
+            thumbnailUri: Uri? = null,
+        ): Intent {
             val intent = Intent(context, EditorActivity::class.java).putExtra(EXTRA_NOTE_URI, uri.toString())
+            if (thumbnailName != null && thumbnailUri != null) {
+                intent.putExtra(EXTRA_THUMBNAIL_NAME, thumbnailName)
+                intent.putExtra(EXTRA_THUMBNAIL_URI, thumbnailUri.toString())
+            }
             val idx = orderedUris.indexOf(uri)
             if (orderedUris.size >= 2 && idx >= 0) {
                 val from = (idx - NAV_WINDOW).coerceAtLeast(0)
@@ -200,7 +232,13 @@ private val stringStateListSaver = listSaver<SnapshotStateList<String>, String>(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () -> Unit) {
+private fun EditorScreen(
+    initialUri: Uri?,
+    navUris: List<String>,
+    initialThumbnail: Pair<String, Uri>?,
+    initialLabel: String?,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
@@ -215,11 +253,17 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     var navIndex by rememberSaveable { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
     val navEnabled = navUris.size >= 2 && navIndex >= 0
     var loaded by rememberSaveable { mutableStateOf(initialUri == null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    // Saveable zoals `loaded`: anders toonde een draai een lege editor voor een niet-geladen notitie.
+    var loadError by rememberSaveable { mutableStateOf<String?>(null) }
+    // Notitie met een geparkeerde, niet af te maken opslag: de editor biedt dan de uitweg.
+    var parkedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var parkedBusy by remember { mutableStateOf(false) }
+    var showParkedDiscard by rememberSaveable { mutableStateOf(false) }
     var bodyText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
     var originalBody by rememberSaveable { mutableStateOf("") }
+    var bodyEditing by rememberSaveable { mutableStateOf(initialUri == null) }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
     // vanouds een titel af uit de eerste woorden van de body.
     var titleText by rememberSaveable { mutableStateOf("") }
@@ -235,11 +279,21 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     var color by rememberSaveable { mutableStateOf(NoteColor.DEFAULT) }
     var pinned by rememberSaveable { mutableStateOf(false) }
     val tags = rememberSaveable(saver = stringStateListSaver) { mutableStateListOf<String>() }
+    val labels = rememberSaveable(saver = stringStateListSaver) {
+        mutableStateListOf<String>().apply { initialLabel?.let { add(it) } }
+    }
     var reminder by rememberSaveable { mutableStateOf<String?>(null) }
     var originalReminder by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderRepeat by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderUntil by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderLimit by rememberSaveable { mutableStateOf<Int?>(null) }
+    var reminderDone by rememberSaveable { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var editorMenuOpen by remember { mutableStateOf(false) }
+    var labelsSheetOpen by remember { mutableStateOf(false) }
+    var labelsOpening by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showLinkPicker by remember { mutableStateOf(false) }
     var photoMenuExpanded by remember { mutableStateOf(false) }
@@ -276,6 +330,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             val newText = before + insert + after
             val cursorPos = before.length + insert.length
             bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+            bodyEditing = true
         }
         embedLines.add("![[" + basename + "]]")
     }
@@ -414,6 +469,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         val newText = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
         val newCaret = (caret + caretDelta).coerceIn(0, newText.length)
         bodyText = TextFieldValue(text = newText, selection = TextRange(newCaret))
+        bodyEditing = true
     }
 
     fun insertText(text: String) {
@@ -431,6 +487,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         val newText = before + insert + after
         val cursorPos = before.length + insert.length
         bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+        bodyEditing = true
     }
 
     val speechLauncher = rememberLauncherForActivityResult(
@@ -467,15 +524,19 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     suspend fun loadInto(uriString: String) {
         loaded = false
         loadError = null
+        parkedUri = null
         val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
             runCatching {
                 val raw = Storage.readNote(context, Uri.parse(uriString)).getOrThrow()
-                val needsAttachments = Storage.findEmbeddedAttachmentBasenames(raw).isNotEmpty()
-                val shouldBuildIndex = cachedAttachments == null && needsAttachments
+                val embedded = Storage.findEmbeddedAttachmentBasenames(raw)
+                val fromList = initialThumbnail?.takeIf {
+                    uriString == initialUri?.toString() && embedded.size == 1 && embedded[0] == it.first
+                }?.let { mapOf(it) }
+                val shouldBuildIndex = cachedAttachments == null && embedded.isNotEmpty() && fromList == null
                 Triple(
                     raw,
-                    cachedAttachments ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
+                    cachedAttachments ?: fromList ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
                     cachedAttachments != null || shouldBuildIndex,
                 )
             }
@@ -492,6 +553,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 originalTitle = loadedTitle
                 titleLevel = loadedLevel
                 bodyText = TextFieldValue(loadedBody)
+                bodyEditing = false
                 originalBody = loadedBody
                 embedLines.clear()
                 embedLines.addAll(embeds)
@@ -500,8 +562,14 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 pinned = parsed.meta.pinned
                 tags.clear()
                 tags.addAll(parsed.meta.tags)
+                labels.clear()
+                labels.addAll(parsed.meta.labels)
                 reminder = parsed.meta.reminder
                 originalReminder = parsed.meta.reminder
+                reminderRepeat = parsed.meta.reminderRepeat
+                reminderUntil = parsed.meta.reminderUntil
+                reminderLimit = parsed.meta.reminderLimit
+                reminderDone = parsed.meta.reminderDone
                 currentUri = uriString
             } catch (e: Throwable) {
                 loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
@@ -509,7 +577,38 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             loaded = true
         }.onFailure { err ->
             loadError = err.message ?: context.getString(R.string.error_unknown)
+            if (err is Storage.ParkedSaveException) parkedUri = uriString
             loaded = true
+        }
+    }
+
+    fun resolveParked(keepCopy: Boolean) {
+        val uri = parkedUri ?: return
+        parkedBusy = true
+        val appContext = context.applicationContext
+        scope.launch {
+            // Niet afbreekbaar: bij een draai tijdens de actie hoort de melding nog steeds bij het resultaat.
+            val res = withContext(NonCancellable + Dispatchers.IO) {
+                val res = Storage.noteWriteMutex.withLock {
+                    runCatching {
+                        if (keepCopy) Storage.keepParkedSaveAsCopy(appContext, Uri.parse(uri)).getOrThrow()
+                        else Storage.discardParkedSave(appContext, Uri.parse(uri)).let { Storage.ParkedResolution.Released }
+                    }
+                }
+                val message = res.fold(
+                    onSuccess = { resolution ->
+                        when (resolution) {
+                            is Storage.ParkedResolution.Copied -> appContext.getString(R.string.parked_copy_saved, resolution.name)
+                            Storage.ParkedResolution.Released -> if (keepCopy) appContext.getString(R.string.parked_nothing_to_keep) else null
+                        }
+                    },
+                    onFailure = { err -> appContext.getString(R.string.toast_error, err.message ?: "") },
+                )
+                if (message != null) withContext(Dispatchers.Main) { Toast.makeText(appContext, message, Toast.LENGTH_LONG).show() }
+                res
+            }
+            parkedBusy = false
+            if (res.isSuccess && parkedUri == uri) loadInto(uri)
         }
     }
 
@@ -519,7 +618,17 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         }
     }
 
-    val isDirty = loaded && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
+    // Na een draai (ook tijdens Keep/Discard) kan de geparkeerde opslag al opgelost zijn: na de lopende actie opnieuw kijken.
+    LaunchedEffect(Unit) {
+        val uri = parkedUri ?: return@LaunchedEffect
+        parkedBusy = true
+        withContext(Dispatchers.IO) { Storage.noteWriteMutex.withLock {} }
+        parkedBusy = false
+        if (parkedUri == uri) loadInto(uri)
+    }
+
+    // Na een mislukte load (bv. naar een geparkeerde notitie gebladerd) hoort de oude editor-state bij geen notitie meer.
+    val isDirty = loaded && loadError == null && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
     val isExisting = currentUri != null
     val bg = noteBackground(color, dark)
     val fg = contentColorOn(color, dark)
@@ -539,11 +648,19 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         newPinned: Boolean = pinned,
         newTags: List<String> = tags.toList(),
         newReminder: String? = reminder,
+        newRepeat: String? = reminderRepeat,
+        newUntil: String? = reminderUntil,
+        newLimit: Int? = reminderLimit,
+        newDone: Int = reminderDone,
     ) {
         val uri = currentUri ?: return
         val reminderChanged = newReminder != originalReminder
         scope.launch {
-            val newMeta = NoteMeta(color = newColor, tags = newTags, pinned = newPinned, reminder = newReminder)
+            val newMeta = NoteMeta(
+                color = newColor, tags = newTags, pinned = newPinned,
+                reminder = newReminder, reminderRepeat = newRepeat,
+                reminderUntil = newUntil, reminderLimit = newLimit, reminderDone = newDone,
+            )
             withContext(Dispatchers.IO) {
                 // Onder de schrijf-mutex: updateNoteMeta is read-modify-write en
                 // mag niet verweven raken met een gelijktijdige body-save.
@@ -577,7 +694,12 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             color = color,
             pinned = pinned,
             tags = tags.toList(),
+            labels = labels.toList(),
             reminder = reminderAtSave,
+            reminderRepeat = reminderRepeat,
+            reminderUntil = reminderUntil,
+            reminderLimit = reminderLimit,
+            reminderDone = reminderDone,
             isDirty = isDirty,
             onSavingChange = { saving = it },
             onSaved = { newUri ->
@@ -610,7 +732,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     // worden eerst opgeslagen (zelfde pad als de save-knop); een save-fout
     // annuleert de navigatie zodat er niets verloren gaat.
     fun navigateTo(delta: Int) {
-        if (!navEnabled || saving || !loaded) return
+        if (!navEnabled || saving || !loaded || parkedBusy) return
         val target = navIndex + delta
         if (target < 0 || target >= navUris.size) return
         val proceed: () -> Unit = {
@@ -630,7 +752,12 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 color = color,
                 pinned = pinned,
                 tags = tags.toList(),
+                labels = labels.toList(),
                 reminder = reminderAtSave,
+                reminderRepeat = reminderRepeat,
+                reminderUntil = reminderUntil,
+                reminderLimit = reminderLimit,
+                reminderDone = reminderDone,
                 isDirty = true,
                 onSavingChange = { saving = it },
                 onSaved = {
@@ -681,121 +808,167 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        pinned = !pinned
-                        if (isExisting) applyMetaAsync(newPinned = pinned)
-                    }) {
-                        Icon(
-                            Icons.Filled.PushPin,
-                            contentDescription = stringResource(if (pinned) R.string.action_unpin else R.string.action_pin),
-                            tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    IconButton(onClick = { showColorPicker = true }) {
-                        Icon(Icons.Filled.Palette, contentDescription = stringResource(R.string.action_color))
-                    }
-                    IconButton(onClick = { showLinkPicker = true }) {
-                        Icon(Icons.Filled.Link, contentDescription = stringResource(R.string.action_link))
-                    }
-                    IconButton(onClick = { toggleOrInsertChecklist() }) {
-                        Icon(Icons.Filled.CheckBox, contentDescription = stringResource(R.string.action_checklist))
-                    }
-                    IconButton(onClick = { launchSpeech() }) {
-                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.action_speech))
-                    }
-                    Box {
-                        IconButton(onClick = { photoMenuExpanded = true }) {
-                            Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_insert_photo))
-                        }
-                        DropdownMenu(
-                            expanded = photoMenuExpanded,
-                            onDismissRequest = { photoMenuExpanded = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_take_photo)) },
-                                leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchCamera(withOcr = false)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_pick_from_gallery)) },
-                                leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchPicker(withOcr = false)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_ocr_camera)) },
-                                leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchCamera(withOcr = true)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_ocr_gallery)) },
-                                leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchPicker(withOcr = true)
-                                },
+                    // Zonder geladen notitie (bv. geparkeerd) zouden deze acties op een vorige of verkeerde notitie werken.
+                    if (loadError == null) {
+                        IconButton(onClick = {
+                            pinned = !pinned
+                            if (isExisting) applyMetaAsync(newPinned = pinned)
+                        }) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = stringResource(if (pinned) R.string.action_unpin else R.string.action_pin),
+                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             )
                         }
-                    }
-                    if (isExisting) {
-                        IconButton(onClick = { showArchiveDialog = true }) {
-                            Icon(Icons.Filled.Archive, contentDescription = stringResource(R.string.action_archive))
+                        IconButton(onClick = { showColorPicker = true }) {
+                            Icon(Icons.Filled.Palette, contentDescription = stringResource(R.string.action_color))
                         }
-                        IconButton(onClick = { showDeleteDialog = true }) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
+                        IconButton(onClick = { showLinkPicker = true }) {
+                            Icon(Icons.Filled.Link, contentDescription = stringResource(R.string.action_link))
                         }
-                    }
-                    IconButton(
-                        enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
-                        onClick = {
-                            val reminderAtSave = reminder
-                            attemptSaveAndClose(
-                                scope = scope,
-                                context = context,
-                                bodyText = bodyText.text,
-                                title = titleText,
-                                titleLevel = titleLevel,
-                                embedLines = embedLines.toList(),
-                                currentUri = currentUri,
-                                color = color,
-                                pinned = pinned,
-                                tags = tags.toList(),
-                                reminder = reminderAtSave,
-                                isDirty = true,
-                                onSavingChange = { saving = it },
-                                onSaved = { newUri ->
-                                    if (newUri != null) currentUri = newUri.toString()
-                                    originalBody = bodyText.text
-                                    originalTitle = titleText
-                                    originalEmbeds = embedLines.toList()
-                                    val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
-                                    if (finalUri != null) {
-                                        ReminderScheduler.cancel(context, finalUri)
-                                        if (!reminderAtSave.isNullOrBlank()) {
-                                            ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                        IconButton(onClick = { toggleOrInsertChecklist() }) {
+                            Icon(Icons.Filled.CheckBox, contentDescription = stringResource(R.string.action_checklist))
+                        }
+                        IconButton(onClick = { launchSpeech() }) {
+                            Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.action_speech))
+                        }
+                        Box {
+                            IconButton(onClick = { photoMenuExpanded = true }) {
+                                Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_insert_photo))
+                            }
+                            DropdownMenu(
+                                expanded = photoMenuExpanded,
+                                onDismissRequest = { photoMenuExpanded = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_take_photo)) },
+                                    leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchCamera(withOcr = false)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_pick_from_gallery)) },
+                                    leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchPicker(withOcr = false)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_ocr_camera)) },
+                                    leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchCamera(withOcr = true)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_ocr_gallery)) },
+                                    leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchPicker(withOcr = true)
+                                    },
+                                )
+                            }
+                        }
+                        Box {
+                            IconButton(onClick = { editorMenuOpen = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                            }
+                            DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.nav_labels)) },
+                                    leadingIcon = { Icon(Icons.Filled.Label, null) },
+                                    enabled = loaded && loadError == null && !saving && !labelsOpening,
+                                    onClick = {
+                                        editorMenuOpen = false
+                                        val targetUri = currentUri
+                                        if (targetUri == null) {
+                                            labelsSheetOpen = true
+                                        } else {
+                                            labelsOpening = true
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.IO) {
+                                                    Storage.noteWriteMutex.withLock { Storage.readNote(context, Uri.parse(targetUri)) }
+                                                }
+                                                labelsOpening = false
+                                                if (targetUri == currentUri) result.onSuccess { content ->
+                                                    labels.clear()
+                                                    labels.addAll(FrontmatterParser.parse(content).meta.labels)
+                                                    labelsSheetOpen = true
+                                                }.onFailure { err ->
+                                                    Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                                                }
+                                            }
                                         }
-                                        originalReminder = reminderAtSave
-                                    }
-                                    Toast.makeText(context, R.string.toast_saved_short, Toast.LENGTH_SHORT).show()
-                                    onClose()
-                                },
-                                onError = { msg ->
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                },
-                                closeWhenClean = false,
-                                onClose = onClose,
-                            )
-                        },
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.action_save))
+                                    },
+                                )
+                                if (isExisting) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_archive)) },
+                                        leadingIcon = { Icon(Icons.Filled.Archive, null) },
+                                        onClick = { editorMenuOpen = false; showArchiveDialog = true },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_delete)) },
+                                        leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                                        onClick = { editorMenuOpen = false; showDeleteDialog = true },
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(
+                            enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
+                            onClick = {
+                                val reminderAtSave = reminder
+                                attemptSaveAndClose(
+                                    scope = scope,
+                                    context = context,
+                                    bodyText = bodyText.text,
+                                    title = titleText,
+                                    titleLevel = titleLevel,
+                                    embedLines = embedLines.toList(),
+                                    currentUri = currentUri,
+                                    color = color,
+                                    pinned = pinned,
+                                    tags = tags.toList(),
+                                    labels = labels.toList(),
+                                    reminder = reminderAtSave,
+                                    reminderRepeat = reminderRepeat,
+                                    reminderUntil = reminderUntil,
+                                    reminderLimit = reminderLimit,
+                                    reminderDone = reminderDone,
+                                    isDirty = true,
+                                    onSavingChange = { saving = it },
+                                    onSaved = { newUri ->
+                                        if (newUri != null) currentUri = newUri.toString()
+                                        originalBody = bodyText.text
+                                        originalTitle = titleText
+                                        originalEmbeds = embedLines.toList()
+                                        val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
+                                        if (finalUri != null) {
+                                            ReminderScheduler.cancel(context, finalUri)
+                                            if (!reminderAtSave.isNullOrBlank()) {
+                                                ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                                            }
+                                            originalReminder = reminderAtSave
+                                        }
+                                        Toast.makeText(context, R.string.toast_saved_short, Toast.LENGTH_SHORT).show()
+                                        onClose()
+                                    },
+                                    onError = { msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    },
+                                    closeWhenClean = false,
+                                    onClose = onClose,
+                                )
+                            },
+                        ) {
+                            Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.action_save))
+                        }
                     }
                 },
             )
@@ -840,6 +1013,35 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 !loaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
+                parkedUri != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = stringResource(R.string.parked_save_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = fg,
+                        )
+                        Text(
+                            text = stringResource(R.string.parked_save_message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = fg,
+                        )
+                        // Bewaren is de veilige keuze en daarom de hoofdknop.
+                        Button(onClick = { resolveParked(keepCopy = true) }, enabled = !parkedBusy) {
+                            Text(stringResource(R.string.parked_keep_copy))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = { parkedUri?.let { scope.launch { loadInto(it) } } },
+                                enabled = !parkedBusy,
+                            ) {
+                                Text(stringResource(R.string.retry))
+                            }
+                            TextButton(onClick = { showParkedDiscard = true }, enabled = !parkedBusy) {
+                                Text(stringResource(R.string.parked_discard))
+                            }
+                        }
+                    }
+                }
                 loadError != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text(
                         text = stringResource(R.string.error_with_message, loadError ?: ""),
@@ -849,7 +1051,22 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 }
                 else -> EditorBody(
                     value = bodyText,
-                    onValueChange = { bodyText = it },
+                    onValueChange = { next ->
+                        val current = bodyText
+                        val start = current.selection.min
+                        val end = current.selection.max
+                        // Only a committed single newline; leave bulk edits and IME composition alone.
+                        val edit = if (next.composition == null && next.selection.collapsed &&
+                            next.selection.start == start + 1 &&
+                            next.text == current.text.replaceRange(start, end, "\n")
+                        ) listEnterEdit(current.text, start, end) else null
+                        bodyText = if (edit == null) next else TextFieldValue(
+                            text = current.text.replaceRange(edit.from, edit.to, edit.insert),
+                            selection = TextRange(edit.from + edit.insert.length),
+                        )
+                    },
+                    bodyEditing = bodyEditing,
+                    onEditBody = { bodyEditing = true },
                     title = titleText,
                     onTitleChange = { titleText = it },
                     embedItems = embedItems,
@@ -867,9 +1084,49 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                         }
                     },
                     reminder = reminder,
+                    repeat = reminderRepeat,
+                    until = reminderUntil,
+                    limit = reminderLimit,
                     onReminderChange = { newIso ->
                         reminder = newIso
-                        if (isExisting) applyMetaAsync(newReminder = newIso)
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newReminder = newIso, newDone = 0)
+                        }
+                    },
+                    onRepeatChange = { newRepeat ->
+                        reminderRepeat = newRepeat
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newRepeat = newRepeat, newDone = 0)
+                        }
+                    },
+                    onUntilChange = { newUntil ->
+                        reminderUntil = newUntil
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newUntil = newUntil, newDone = 0)
+                        }
+                    },
+                    onLimitChange = { newLimit ->
+                        reminderLimit = newLimit
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newLimit = newLimit, newDone = 0)
+                        }
+                    },
+                    onClear = {
+                        reminder = null
+                        reminderRepeat = null
+                        reminderUntil = null
+                        reminderLimit = null
+                        reminderDone = 0
+                        if (isExisting) {
+                            applyMetaAsync(
+                                newReminder = null, newRepeat = null,
+                                newUntil = null, newLimit = null, newDone = 0,
+                            )
+                        }
                     },
                     foreground = fg,
                 )
@@ -877,6 +1134,20 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             }
         }
     }
+    }
+
+    if (labelsSheetOpen) {
+        LabelAssignmentSheet(
+            labels = Storage.getLabels(context),
+            selectedLabels = labels.toSet(),
+            onApply = { added, removed ->
+                val uri = currentUri?.let { Uri.parse(it) }
+                val result = if (uri == null) Result.success(LabelNames.applyChanges(labels.toList(), added, removed))
+                else withContext(Dispatchers.IO) { Storage.updateLabels(context, uri, added, removed) }
+                result.onSuccess { updated -> labels.clear(); labels.addAll(updated) }.map { Unit }
+            },
+            onDismiss = { labelsSheetOpen = false },
+        )
     }
 
     if (showColorPicker) {
@@ -905,6 +1176,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                     text = newText,
                     selection = androidx.compose.ui.text.TextRange(start + insert.length)
                 )
+                bodyEditing = true
             },
             onDismiss = { showLinkPicker = false },
         )
@@ -950,7 +1222,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                     val parsedUri = Uri.parse(uri)
                     ReminderScheduler.cancel(context, parsedUri)
                     val res = withContext(Dispatchers.IO) {
-                        Storage.deleteNote(context, parsedUri)
+                        Storage.noteWriteMutex.withLock { Storage.deleteOrTrashNote(context, parsedUri) }
                     }
                     res.onSuccess {
                         Toast.makeText(context, R.string.toast_deleted, Toast.LENGTH_SHORT).show()
@@ -963,6 +1235,18 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             onDismiss = { showDeleteDialog = false },
         )
     }
+    if (showParkedDiscard) {
+        ConfirmDialog(
+            title = stringResource(R.string.parked_discard_title),
+            message = stringResource(R.string.parked_discard_message),
+            confirmLabel = stringResource(R.string.parked_discard),
+            onConfirm = {
+                showParkedDiscard = false
+                resolveParked(keepCopy = false)
+            },
+            onDismiss = { showParkedDiscard = false },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -970,6 +1254,8 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
 private fun EditorBody(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
+    bodyEditing: Boolean,
+    onEditBody: () -> Unit,
     title: String,
     onTitleChange: (String) -> Unit,
     embedItems: List<Pair<String, Uri>>,
@@ -977,11 +1263,48 @@ private fun EditorBody(
     onAddTag: (String) -> Unit,
     onRemoveTag: (String) -> Unit,
     reminder: String?,
+    repeat: String?,
+    until: String?,
+    limit: Int?,
     onReminderChange: (String?) -> Unit,
+    onRepeatChange: (String?) -> Unit,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    onClear: () -> Unit,
     foreground: Color,
 ) {
+    val context = LocalContext.current
     var lightboxUri by remember { mutableStateOf<Uri?>(null) }
     val scrollState = rememberScrollState()
+    // Compose kan in deze scrollkolom geen tekstveld meten dat hoger is dan
+    // 2^18 px; een notitie van enkele MiB crashte de editor. Schatting is ruim:
+    // elk teken telt als een volle em breed. De tekst blijft in de state, dus
+    // tags/kleur/pin (updateNoteMeta) bewaren de body ongewijzigd.
+    val density = LocalDensity.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val bodyStyle = MaterialTheme.typography.bodyLarge
+    val bodyTooTall = remember(value.text, screenWidthDp, density, bodyStyle) {
+        with(density) {
+            val charsPerLine = ((screenWidthDp - 64).dp.toPx() / bodyStyle.fontSize.toPx()).toInt().coerceAtLeast(1)
+            val lines = value.text.lineSequence().sumOf { 1L + it.length / charsPerLine }
+            lines * bodyStyle.lineHeight.toPx() > 200_000f
+        }
+    }
+    val preview = remember(value.text, foreground, bodyEditing, bodyTooTall) {
+        if (bodyEditing || bodyTooTall) androidx.compose.ui.text.AnnotatedString("")
+        else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
+    }
+    val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)
+    val openLinkLabel = stringResource(R.string.action_open_link)
+    fun openLink(url: String): Boolean {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (e: Exception) {
+            Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1045,7 +1368,14 @@ private fun EditorBody(
         Spacer(Modifier.height(8.dp))
         ReminderEditor(
             reminder = reminder,
-            onChange = onReminderChange,
+            repeat = repeat,
+            until = until,
+            limit = limit,
+            onReminderChange = onReminderChange,
+            onRepeatChange = onRepeatChange,
+            onUntilChange = onUntilChange,
+            onLimitChange = onLimitChange,
+            onClear = onClear,
             foreground = foreground,
         )
         Spacer(Modifier.height(12.dp))
@@ -1055,6 +1385,8 @@ private fun EditorBody(
             value = title,
             onValueChange = onTitleChange,
             modifier = Modifier.fillMaxWidth(),
+            // De titel is de eerste regel van de body; een titelwijziging herschrijft de onzichtbare tekst.
+            enabled = !bodyTooTall,
             singleLine = true,
             placeholder = { Text(stringResource(R.string.editor_title_hint), color = foreground.copy(alpha = 0.5f)) },
             textStyle = MaterialTheme.typography.titleLarge,
@@ -1062,31 +1394,73 @@ private fun EditorBody(
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent,
+                disabledContainerColor = Color.Transparent,
                 focusedTextColor = foreground,
                 unfocusedTextColor = foreground,
+                disabledTextColor = foreground,
                 cursorColor = foreground,
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
             ),
         )
-        TextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 200.dp),
-            placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                focusedTextColor = foreground,
-                unfocusedTextColor = foreground,
-                cursorColor = foreground,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
-        )
+        // The preview is display-only; saving always uses the original TextFieldValue.
+        if (bodyTooTall) {
+            Text(
+                stringResource(R.string.editor_body_too_large),
+                color = foreground,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(16.dp),
+            )
+        } else if (!bodyEditing && previewLinks.isNotEmpty()) {
+            TextButton(onClick = onEditBody) {
+                Text(stringResource(R.string.editor_title_edit), color = foreground)
+            }
+            ClickableText(
+                text = preview,
+                style = MaterialTheme.typography.bodyLarge.copy(color = foreground),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp).semantics {
+                    customActions = previewLinks.map { link ->
+                        CustomAccessibilityAction(
+                            "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
+                        ) { openLink(link.item) }
+                    }
+                },
+                onClick = { offset ->
+                    val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
+                    if (url == null) {
+                        onEditBody()
+                    } else {
+                        openLink(url)
+                    }
+                },
+            )
+        } else {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                visualTransformation = androidx.compose.ui.text.input.VisualTransformation { source ->
+                    androidx.compose.ui.text.input.TransformedText(
+                        androidx.compose.ui.text.AnnotatedString(renderListBullets(source.text)),
+                        androidx.compose.ui.text.input.OffsetMapping.Identity,
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp),
+                placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedTextColor = foreground,
+                    unfocusedTextColor = foreground,
+                    cursorColor = foreground,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+            )
+        }
     }
     lightboxUri?.let { uri ->
         ImageLightbox(uri = uri, onClose = { lightboxUri = null })
@@ -1179,8 +1553,6 @@ private fun TagEditor(
         input = ""
     }
 
-    // Chips + inline input in a single FlowRow so the input always follows
-    // directly after the last chip with no extra vertical gap.
     androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1428,7 +1800,12 @@ private fun attemptSaveAndClose(
     color: NoteColor,
     pinned: Boolean,
     tags: List<String>,
+    labels: List<String>,
     reminder: String?,
+    reminderRepeat: String?,
+    reminderUntil: String?,
+    reminderLimit: Int?,
+    reminderDone: Int,
     isDirty: Boolean,
     onSavingChange: (Boolean) -> Unit,
     onSaved: (Uri?) -> Unit,
@@ -1436,21 +1813,23 @@ private fun attemptSaveAndClose(
     closeWhenClean: Boolean,
     onClose: () -> Unit,
 ) {
-    val meta = NoteMeta(color = color, tags = tags, pinned = pinned, reminder = reminder)
+    val meta = NoteMeta(
+        color = color, tags = tags, pinned = pinned,
+        reminder = reminder, reminderRepeat = reminderRepeat,
+        reminderUntil = reminderUntil, reminderLimit = reminderLimit, reminderDone = reminderDone,
+    )
     if (!isDirty && currentUri != null) {
         // Metadata is bij bestaande notities al onmiddellijk gesynct; alleen sluiten.
         if (closeWhenClean) onClose()
         return
     }
-    // Neutraliseer inline `#hashtags` in de body voordat we wegschrijven —
-    // anders zou typen van `#fyp` in de editor alsnog Obsidian's graph view
-    // vervuilen. Spiegelt het gedrag van de plugin's edit-modal en de
-    // Storage.saveNote-path. Embeds worden niet aangeraakt (regex matcht ze niet).
+    // Hashtags die de gebruiker typt of die al in de notitie stonden blijven
+    // staan: dat zijn bewuste Obsidian-tags (issue #16). Alleen gedeelde inhoud
+    // wordt geneutraliseerd (ShareActivity, PreviewWorker).
     // Titel terug als leidende `# kop`; lege titel → geen kop, dan leidt de
     // kaart 'm af uit de body (ongewijzigd fallback-gedrag).
     val merged = joinHeadingTitle(title, bodyText, titleLevel)
-    val safeBody = Storage.neutralizeBodyHashtags(merged)
-    val combinedBody = combineBodyAndEmbeds(safeBody, embedLines)
+    val combinedBody = combineBodyAndEmbeds(merged, embedLines)
     if (combinedBody.isBlank()) {
         if (currentUri == null) {
             if (closeWhenClean) onClose()
@@ -1476,7 +1855,7 @@ private fun attemptSaveAndClose(
                     Storage.updateNote(context, Uri.parse(currentUri), FrontmatterWriter.apply(newRaw, meta)).map { null }
                 } else {
                     // Nieuwe notitie: body + meta in één keer wegschrijven.
-                    val combined = FrontmatterWriter.apply(combinedBody, meta)
+                    val combined = FrontmatterWriter.apply(combinedBody, meta, labels = labels)
                     Storage.createNote(context, combined).map { it.second }
                 }
             }
@@ -1682,7 +2061,14 @@ private fun formatPlayerTime(ms: Int): String {
 @Composable
 private fun ReminderEditor(
     reminder: String?,
-    onChange: (String?) -> Unit,
+    repeat: String?,
+    until: String?,
+    limit: Int?,
+    onReminderChange: (String?) -> Unit,
+    onRepeatChange: (String?) -> Unit,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    onClear: () -> Unit,
     foreground: Color,
 ) {
     val context = LocalContext.current
@@ -1734,7 +2120,7 @@ private fun ReminderEditor(
                 .clickable(onClick = pick),
         )
         if (reminder != null) {
-            TextButton(onClick = { onChange(null) }) {
+            TextButton(onClick = onClear) {
                 Text(stringResource(R.string.action_clear_reminder))
             }
         } else {
@@ -1806,7 +2192,7 @@ private fun ReminderEditor(
                         timeState.hour, timeState.minute,
                     )
                     showTimePicker = null
-                    onChange(iso)
+                    onReminderChange(iso)
                 }) {
                     Text(stringResource(android.R.string.ok))
                 }
@@ -1818,6 +2204,446 @@ private fun ReminderEditor(
             },
         )
     }
+
+    if (reminder != null) {
+        Spacer(Modifier.height(4.dp))
+        RepeatEditor(reminder = reminder, repeat = repeat, onChange = onRepeatChange, foreground = foreground)
+        EndEditor(
+            until = until,
+            limit = limit,
+            onUntilChange = onUntilChange,
+            onLimitChange = onLimitChange,
+            foreground = foreground,
+        )
+    }
+}
+
+@Composable
+private fun RepeatEditor(reminder: String, repeat: String?, onChange: (String?) -> Unit, foreground: Color) {
+    var expanded by remember { mutableStateOf(false) }
+    var showWeekdayPicker by remember { mutableStateOf(false) }
+    var showEveryPicker by remember { mutableStateOf(false) }
+    var showOrdinalPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = foreground.copy(alpha = 0.9f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.repeat_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = foreground.copy(alpha = 0.7f),
+            modifier = Modifier.weight(1f),
+        )
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text(repeatLabel(repeat))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_none)) }, onClick = {
+                    expanded = false; onChange(null)
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_daily)) }, onClick = {
+                    expanded = false; onChange("daily")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_weekly)) }, onClick = {
+                    expanded = false; showWeekdayPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_monthly)) }, onClick = {
+                    expanded = false; onChange("monthly")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_yearly)) }, onClick = {
+                    expanded = false; onChange("yearly")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_every)) }, onClick = {
+                    expanded = false; showEveryPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_ordinal)) }, onClick = {
+                    expanded = false; showOrdinalPicker = true
+                })
+            }
+        }
+    }
+
+    if (showWeekdayPicker) {
+        WeekdayPickerDialog(
+            selected = (ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Weekly)?.weekdays
+                ?: setOf(ReminderRecurrence.parseIso(reminder)?.dayOfWeek?.value ?: LocalDate.now().dayOfWeek.value),
+            onConfirm = { days ->
+                showWeekdayPicker = false
+                onChange("weekly:" + days.sorted().joinToString(","))
+            },
+            onDismiss = { showWeekdayPicker = false },
+        )
+    }
+    if (showEveryPicker) {
+        EveryPickerDialog(
+            onConfirm = { n, unit ->
+                showEveryPicker = false
+                onChange("every:$n:${unit.key}")
+            },
+            onDismiss = { showEveryPicker = false },
+        )
+    }
+    if (showOrdinalPicker) {
+        OrdinalPickerDialog(
+            onConfirm = { k, weekday ->
+                showOrdinalPicker = false
+                onChange("ordinal:$k:$weekday")
+            },
+            onDismiss = { showOrdinalPicker = false },
+        )
+    }
+}
+
+@Composable
+private fun EndEditor(
+    until: String?,
+    limit: Int?,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    foreground: Color,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showLimitPicker by remember { mutableStateOf(false) }
+    var showUntilPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = foreground.copy(alpha = 0.9f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.ends_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = foreground.copy(alpha = 0.7f),
+            modifier = Modifier.weight(1f),
+        )
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text(endLabel(until, limit))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_never)) }, onClick = {
+                    expanded = false; onUntilChange(null); onLimitChange(null)
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_after)) }, onClick = {
+                    expanded = false; showLimitPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_on_date)) }, onClick = {
+                    expanded = false; showUntilPicker = true
+                })
+            }
+        }
+    }
+
+    if (showLimitPicker) {
+        LimitPickerDialog(
+            onConfirm = { n -> showLimitPicker = false; onUntilChange(null); onLimitChange(n) },
+            onDismiss = { showLimitPicker = false },
+        )
+    }
+    if (showUntilPicker) {
+        UntilDatePickerDialog(
+            initial = until,
+            onConfirm = { date -> showUntilPicker = false; onLimitChange(null); onUntilChange(date) },
+            onDismiss = { showUntilPicker = false },
+        )
+    }
+}
+
+@Composable
+private fun EveryPickerDialog(onConfirm: (Int, RepeatUnit) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("1") }
+    var unit by remember { mutableStateOf(RepeatUnit.DAYS) }
+    var unitExpanded by remember { mutableStateOf(false) }
+    val n = text.toIntOrNull() ?: 1
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.every_title)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) text = it },
+                    label = { Text(stringResource(R.string.every_title)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Box {
+                    TextButton(onClick = { unitExpanded = true }) {
+                        Text(
+                            when (unit) {
+                                RepeatUnit.DAYS -> stringResource(R.string.every_days)
+                                RepeatUnit.WEEKS -> stringResource(R.string.every_weeks)
+                                RepeatUnit.MONTHS -> stringResource(R.string.every_months)
+                            },
+                        )
+                    }
+                    DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_days)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.DAYS
+                        })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_weeks)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.WEEKS
+                        })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_months)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.MONTHS
+                        })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(n.coerceAtLeast(1), unit) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun OrdinalPickerDialog(onConfirm: (Int, Int) -> Unit, onDismiss: () -> Unit) {
+    var occurrence by remember { mutableStateOf(1) }
+    var weekday by remember { mutableStateOf(1) }
+    var occurrenceExpanded by remember { mutableStateOf(false) }
+    var weekdayExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ordinal_title)) },
+        text = {
+            Column {
+                Box {
+                    TextButton(onClick = { occurrenceExpanded = true }) {
+                        Text(ordinalLabel(occurrence))
+                    }
+                    DropdownMenu(expanded = occurrenceExpanded, onDismissRequest = { occurrenceExpanded = false }) {
+                        for (k in 1..5) {
+                            DropdownMenuItem(text = { Text(ordinalLabel(k)) }, onClick = {
+                                occurrenceExpanded = false; occurrence = k
+                            })
+                        }
+                    }
+                }
+                Box {
+                    TextButton(onClick = { weekdayExpanded = true }) {
+                        Text(narrowWeekday(weekday))
+                    }
+                    DropdownMenu(expanded = weekdayExpanded, onDismissRequest = { weekdayExpanded = false }) {
+                        for (d in 1..7) {
+                            DropdownMenuItem(text = { Text(narrowWeekday(d)) }, onClick = {
+                                weekdayExpanded = false; weekday = d
+                            })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(occurrence, weekday) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun WeekdayPickerDialog(
+    selected: Set<Int>,
+    onConfirm: (Set<Int>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var days by remember { mutableStateOf(selected) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.repeat_weekly)) },
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (d in 1..7) {
+                    val active = d in days
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(
+                                if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+                            )
+                            .selectable(
+                                selected = active,
+                                role = Role.Checkbox,
+                                onClick = { days = if (active) days - d else days + d },
+                            )
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = narrowWeekday(d),
+                            color = if (active) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(days) }, enabled = days.isNotEmpty()) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun LimitPickerDialog(onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("3") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ends_after)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) text = it },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm((text.toIntOrNull() ?: 1).coerceAtLeast(1)) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UntilDatePickerDialog(
+    initial: String?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialDate = remember(initial) {
+        runCatching { LocalDate.parse(initial) }
+            .getOrNull()
+            ?: LocalDate.now().plusDays(1)
+    }
+    val initialUtc = remember(initialDate) {
+        Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(initialDate.year, initialDate.monthValue - 1, initialDate.dayOfMonth)
+        }.timeInMillis
+    }
+    val state = rememberDatePickerState(initialSelectedDateMillis = initialUtc)
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val millis = state.selectedDateMillis ?: return@TextButton
+                val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }
+                onConfirm(
+                    String.format(
+                        Locale.US, "%04d-%02d-%02d",
+                        cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH),
+                    ),
+                )
+            }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    ) {
+        DatePicker(state = state)
+    }
+}
+
+@Composable
+private fun repeatLabel(repeat: String?): String {
+    if (repeat.isNullOrBlank()) return stringResource(R.string.repeat_none)
+    return when {
+        repeat.equals("daily", true) -> stringResource(R.string.repeat_daily)
+        repeat.equals("monthly", true) -> stringResource(R.string.repeat_monthly)
+        repeat.equals("yearly", true) -> stringResource(R.string.repeat_yearly)
+        repeat.startsWith("weekly:", true) -> {
+            val days = repeat.substringAfter(':').split(',')
+                .mapNotNull { it.trim().toIntOrNull() }
+                .filter { it in 1..7 }
+            if (days.isEmpty()) stringResource(R.string.repeat_weekly)
+            else stringResource(R.string.repeat_weekly) + " (" + days.joinToString(", ") { narrowWeekday(it) } + ")"
+        }
+        repeat.startsWith("every:", true) -> {
+            val rule = ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Every
+            if (rule == null) {
+                stringResource(R.string.repeat_every)
+            } else {
+                val unit = when (rule.unit) {
+                    RepeatUnit.DAYS -> stringResource(R.string.every_days)
+                    RepeatUnit.WEEKS -> stringResource(R.string.every_weeks)
+                    RepeatUnit.MONTHS -> stringResource(R.string.every_months)
+                }
+                stringResource(R.string.every_title) + " ${rule.n} $unit"
+            }
+        }
+        repeat.startsWith("ordinal:", true) -> {
+            val rule = ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Ordinal
+            if (rule == null) stringResource(R.string.repeat_ordinal)
+            else ordinalLabel(rule.occurrence) + " " + narrowWeekday(rule.weekday)
+        }
+        else -> stringResource(R.string.repeat_none)
+    }
+}
+
+@Composable
+private fun endLabel(until: String?, limit: Int?): String {
+    return when {
+        limit != null && limit > 0 -> stringResource(R.string.ends_after_count, limit)
+        until != null -> until
+        else -> stringResource(R.string.ends_never)
+    }
+}
+
+@Composable
+private fun ordinalLabel(k: Int): String = stringResource(
+    when (k) {
+        2 -> R.string.ordinal_second
+        3 -> R.string.ordinal_third
+        4 -> R.string.ordinal_fourth
+        5 -> R.string.ordinal_last
+        else -> R.string.ordinal_first
+    },
+)
+
+private fun narrowWeekday(iso: Int): String {
+    return java.time.DayOfWeek.of(iso.coerceIn(1, 7))
+        .getDisplayName(java.time.format.TextStyle.NARROW, Locale.getDefault())
 }
 
 /** Tijdelijke staat tussen date- en time-picker: bewaart gekozen datum + initiële tijd. */

@@ -1,6 +1,6 @@
 {
   "name": "jotdrop",
-  "version": "0.20.5",
+  "version": "0.21.2",
   "description": "A private, open-source Google Keep alternative for Obsidian: a trio of quick-capture card grid, companion Android app, and Chrome web clipper. Install all three for the full Keep experience.",
   "main": "main.js",
   "scripts": {
@@ -12,6 +12,8 @@
     "verify:release": "node scripts/verify-release-source.mjs release",
     "verify:tag": "node scripts/verify-release-tag.mjs",
     "check:list-preview": "node scripts/check-list-preview.cjs",
+    "check:archive": "node scripts/check-archive.cjs",
+    "check:integration": "npm run check:archive && npm run check:hashtags && npm run check:plugin-labels && npm run check:recurrence && npm run check:preview-fallback && npm run check:keep-import && npm run check:markdown-import && npm run check:evernote-import && npm run check:mobile-keyboard && npm run check:toolbar",
     "check:board-updates": "node scripts/check-board-updates.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
     "package:web-clipper": "node scripts/package-web-clipper.mjs",
@@ -20,7 +22,17 @@
     "android:test-release": "node scripts/build-android-release.mjs --test",
     "android:verify": "node scripts/verify-android-apk.mjs",
     "android:install": "node scripts/install-android-release.mjs",
-    "check:fork": "node scripts/check-board-updates.cjs && node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh && node scripts/check-fork-browser.cjs --drag-window"
+    "check:fork": "node scripts/check-board-updates.cjs && node scripts/check-fork-markdown.cjs && node scripts/check-fork-browser.cjs && node scripts/check-fork-browser.cjs --tag-performance && node scripts/check-fork-browser.cjs --tag-render-performance && node scripts/check-fork-browser.cjs --drag-refresh && node scripts/check-fork-browser.cjs --drag-window",
+    "check:plugin-labels": "node scripts/check-plugin-labels.cjs",
+    "check:hashtags": "node scripts/check-hashtags.cjs",
+    "check:keep-import": "node scripts/check-keep-import.cjs",
+    "check:markdown-import": "node scripts/check-markdown-import.cjs",
+    "check:evernote-import": "node scripts/check-evernote-import.cjs",
+    "check:mobile-keyboard": "node scripts/check-mobile-keyboard.cjs",
+    "check:toolbar": "node scripts/check-toolbar-containment.cjs",
+    "check:preview-fallback": "node scripts/check-preview-fallback.cjs",
+    "check:recurrence": "node scripts/check-recurrence.cjs",
+    "check:reminder-sound": "node scripts/check-reminder-sound.cjs"
   },
   "keywords": [
     "obsidian",

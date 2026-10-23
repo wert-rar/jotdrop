@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 
 const taskMarkdown = new MarkdownIt({ html: true });
 
-export function installJotDropCustomizations({ EditModal, CaptureModal, View, obsidian, t, stripFrontmatter }) {
+export function installJotDropCustomizations({ EditModal, CaptureModal, View, LabelPicker, obsidian, t, stripFrontmatter }) {
   const { Component, MarkdownRenderer, Notice, setIcon, normalizePath } = obsidian;
   const icon = (button, name, label) => {
     button.replaceChildren();
@@ -108,7 +108,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
         try {
           if (!await this.persist()) return;
           const oldPath = this.file.path;
-          await View.prototype.toggleArchive.call({ app: this.app, plugin: this.plugin }, this.file, archived);
+          await View.prototype.toggleArchive.call({ app: this.app, plugin: this.plugin, moveArchivedFile: View.prototype.moveArchivedFile }, this.file, archived);
           if (this.file.path !== oldPath) this.close();
         } finally { archive.disabled = false; }
       }));
@@ -124,12 +124,33 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, ob
       summary.classList.toggle('is-active', !!this.state.reminder);
     };
     updateReminderLabel();
-    reminder.classList.add('jotdrop-reminder-panel');
-    popup.appendChild(reminder);
+    const panel = popup.createDiv({ cls: 'jotdrop-reminder-panel' });
+    panel.appendChild(reminder);
+    const repeat = container.querySelector('.jotdrop-repeat-controls');
+    if (repeat) panel.appendChild(repeat);
     reminder.addEventListener('change', updateReminderLabel);
     reminder.addEventListener('click', updateReminderLabel);
     popup.addEventListener('focusout', event => { if (!popup.contains(event.relatedTarget)) popup.open = false; });
     popup.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); popup.open = false; summary.focus(); } });
+    const labelRow = container.querySelector('.jotdrop-edit-labelrow');
+    if (labelRow) {
+      const labels = row.createEl('details', { cls: 'jotdrop-label-popup' });
+      const labelSummary = labels.createEl('summary', { cls: 'jotdrop-icon-button', attr: { 'aria-label': t('label_section') } });
+      setIcon(labelSummary, 'folder');
+      labelSummary.classList.toggle('is-active', this.state.labels.length > 0);
+      labelRow.querySelector('.jotdrop-edit-label')?.remove();
+      labelRow.classList.add('jotdrop-label-panel');
+      labels.appendChild(labelRow);
+      labelRow.addEventListener('input', () => labelSummary.classList.toggle('is-active', this.state.labels.length > 0 || !!this.labelInputEl?.value.trim()));
+      labelRow.addEventListener('click', () => labelSummary.classList.toggle('is-active', this.state.labels.length > 0));
+      labels.addEventListener('focusout', event => { if (!labels.contains(event.relatedTarget)) labels.open = false; });
+      labels.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); labels.open = false; labelSummary.focus(); } });
+    }
+    if (allowArchive) {
+      const labels = icon(row.createEl('button'), 'folder', t('label_section'));
+      labels.classList.add('jotdrop-editor-label-button');
+      labels.addEventListener('click', () => new LabelPicker(this.app, this.plugin, this.file).open());
+    }
     const tags = container.querySelector('.jotdrop-edit-tagrow');
     tags.querySelector('.jotdrop-edit-label').remove();
     this.tagInputEl.setAttribute('aria-label', t('label_tags'));

@@ -1,7 +1,15 @@
 /* JotDrop — Google Keep-stijl kaartjesweergave */
 
-.jotdrop-view {
-  padding: 16px 20px 32px;
+.jotdrop-labelpicker-search { width: 100%; box-sizing: border-box; }
+.jotdrop-labelpicker-list { max-height: 45vh; overflow-y: auto; margin: 12px 0; }
+.jotdrop-labelpicker-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; cursor: pointer; }
+.jotdrop-labelpicker-new { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.jotdrop-labelpicker-new input { flex: 1; min-width: 0; }
+.jotdrop-labelpicker-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Override Obsidian's .view-content padding, not just our own class. */
+.workspace-leaf-content[data-type="jotdrop-view"] > .view-content.jotdrop-view {
+  padding: 0 20px 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -24,8 +32,9 @@
   position: sticky;
   top: 0;
   z-index: 10;
+  flex-shrink: 0;
   background: var(--background-primary);
-  padding-bottom: 8px;
+  padding: 16px 0 8px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -361,6 +370,25 @@
   text-decoration: line-through;
 }
 
+.jotdrop-filter-chip-label {
+  font-size: 0.82em;
+  line-height: 1.2;
+}
+
+.jotdrop-filter-chip-count {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  padding: 0 5px;
+  border-radius: 999px;
+  margin-left: 2px;
+}
+
+.jotdrop-filter-chip.is-selected .jotdrop-filter-chip-count {
+  color: var(--text-on-accent);
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .jotdrop-filter-chip.is-overflow {
   border-style: dashed;
   color: var(--text-muted);
@@ -515,7 +543,8 @@
   border: 1px solid var(--kc-border);
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease,
+    margin-block 0.15s ease;
   position: relative;
 }
 .jotdrop-card[data-color="red"]    { --kc-bg: #FAAFA8; --kc-border: #E7948C; }
@@ -558,6 +587,45 @@
 
 .jotdrop-card.is-archived {
   opacity: 0.7;
+}
+
+/* Manual reorder drag/drop: the dragged card dims, the drop target shows an
+   accent bar on the edge being inserted at, and shifts to open the slot. */
+.jotdrop-card.is-dragging {
+  opacity: 0.45;
+}
+
+.jotdrop-card.is-drop-before,
+.jotdrop-card.is-drop-after {
+  position: relative;
+}
+
+.jotdrop-card.is-drop-before::before,
+.jotdrop-card.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  z-index: 3;
+}
+
+.jotdrop-card.is-drop-before::before {
+  top: -8px;
+}
+
+.jotdrop-card.is-drop-after::after {
+  bottom: -8px;
+}
+
+.jotdrop-card.is-drop-before {
+  margin-block-start: 12px;
+}
+
+.jotdrop-card.is-drop-after {
+  margin-block-end: 12px;
 }
 
 .jotdrop-card-quick-pin {
@@ -818,6 +886,82 @@
 
 .jotdrop-reminder-notice {
   cursor: pointer;
+}
+
+.jotdrop-card-repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.75em;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.jotdrop-card-repeat-icon {
+  opacity: 0.85;
+}
+
+.jotdrop-repeat-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.jotdrop-repeat-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.jotdrop-repeat-weekday {
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
+.jotdrop-repeat-weekday.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.jotdrop-repeat-every,
+.jotdrop-repeat-ordinal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jotdrop-edit-repeat-n,
+.jotdrop-edit-repeat-unit,
+.jotdrop-edit-repeat-type,
+.jotdrop-edit-repeat-k,
+.jotdrop-edit-repeat-weekday,
+.jotdrop-edit-repeat-end,
+.jotdrop-edit-repeat-limit,
+.jotdrop-edit-repeat-until {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.9em;
+}
+
+.jotdrop-edit-repeat-n,
+.jotdrop-edit-repeat-limit {
+  width: 64px;
 }
 
 .jotdrop-card-links {
@@ -1237,6 +1381,63 @@
   outline-offset: 1px;
 }
 
+.jotdrop-list-editor {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--background-primary);
+  border-radius: 8px;
+}
+
+.jotdrop-list-editor textarea {
+  position: relative;
+  display: block;
+  margin: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-normal);
+}
+
+.jotdrop-list-editor textarea::selection {
+  color: var(--text-normal);
+  background: var(--text-selection);
+}
+
+.jotdrop-list-editor-preview {
+  position: absolute;
+  inset: 1px auto auto 1px;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 10px 12px;
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.jotdrop-list-bullet {
+  position: relative;
+  color: transparent;
+}
+
+.jotdrop-list-bullet::after {
+  content: "\2022";
+  position: absolute;
+  inset: 0;
+  color: var(--text-normal);
+  text-align: center;
+}
+
+@media (forced-colors: active) {
+  .jotdrop-list-editor-preview { display: none; }
+  .jotdrop-list-editor textarea {
+    color: CanvasText;
+    caret-color: CanvasText;
+  }
+}
+
 .jotdrop-capture-footer {
   display: flex;
   justify-content: space-between;
@@ -1332,6 +1533,37 @@
     opacity: 1;
   }
 
+}
+
+/* The keyboard can resize only the visual viewport, leaving vh/dvh unchanged. */
+.is-mobile .modal.jotdrop-keyboard-modal {
+  --jotdrop-top-gap: max(16px, var(--safe-area-inset-top, 0px));
+  position: fixed;
+  top: calc(var(--jotdrop-viewport-top, 0px) + var(--jotdrop-top-gap));
+  margin-top: 0;
+  margin-bottom: 0;
+  transform: none;
+  height: auto;
+  min-height: 0;
+  max-height: calc(var(--jotdrop-viewport-height, 100dvh) - var(--jotdrop-top-gap));
+  display: flex;
+  flex-direction: column;
+}
+
+.is-mobile .jotdrop-keyboard-modal .modal-content {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.is-mobile .jotdrop-keyboard-modal .modal-header {
+  flex-shrink: 0;
+}
+
+.is-mobile .jotdrop-keyboard-modal textarea {
+  flex-shrink: 0;
+  min-height: 0;
+  height: min(260px, max(48px, calc(var(--jotdrop-viewport-height, 100dvh) - 160px)));
+  max-height: max(48px, calc(var(--jotdrop-viewport-height, 100dvh) - 160px));
 }
 
 /* Obsidian Mobile can report a CSS viewport wider than the physical phone,
@@ -1459,3 +1691,36 @@
   background-image: linear-gradient(to top, color-mix(in srgb, var(--interactive-accent) 30%, transparent), transparent 60%);
 }
 .jotdrop-grid-col.jotdrop-column-drop { outline: 2px dashed var(--interactive-accent); outline-offset: 2px; border-radius: 8px; }
+
+/* Fork styling for recurring reminders and labels. */
+.jotdrop-reminder-panel, .jotdrop-label-panel {
+  color: var(--text-normal);
+  max-height: min(420px, 65vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.jotdrop-reminder-panel { width: 280px; }
+.jotdrop-reminder-panel .jotdrop-reminder-row { flex-wrap: wrap; gap: 6px; margin: 0; }
+.jotdrop-reminder-panel .jotdrop-repeat-controls { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); }
+.jotdrop-reminder-panel .jotdrop-edit-row { gap: 6px; flex-wrap: wrap; margin: 0 0 6px; }
+.jotdrop-reminder-panel .jotdrop-edit-label { font-size: 12px; color: var(--text-muted); }
+.jotdrop-reminder-panel input, .jotdrop-reminder-panel select { max-width: 100%; min-height: 28px; font-size: 12px; }
+.jotdrop-reminder-panel select { flex: 1; min-width: 100px; }
+.jotdrop-compact-actions { position: relative; }
+.jotdrop-reminder-popup, .jotdrop-label-popup { position: static; flex: 0 0 28px; }
+.jotdrop-label-popup summary { list-style: none; }
+.jotdrop-label-popup summary::-webkit-details-marker { display: none; }
+.jotdrop-label-popup summary.is-active { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.jotdrop-label-panel { position: absolute; top: 32px; left: 0; z-index: 20; width: 230px; max-width: 75vw; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-primary); box-shadow: var(--shadow-s); }
+.jotdrop-reminder-panel { left: 0; }
+.jotdrop-label-panel .jotdrop-edit-chips { flex-wrap: wrap; overflow: visible; gap: 4px; }
+.jotdrop-label-panel .jotdrop-edit-taginput { flex: 1 1 100%; width: 100%; }
+.jotdrop-toolbar-label-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 5px; border-radius: 6px; color: var(--text-muted); }
+.jotdrop-toolbar-label-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.jotdrop-filter-chip.jotdrop-filter-chip-label { gap: 4px; }
+.jotdrop-filter-chip.jotdrop-filter-chip-label.is-selected { color: var(--interactive-accent); border-color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.jotdrop-filter-chip-count { color: var(--text-muted); font-size: 11px; }
+@media (max-width: 480px) {
+  .jotdrop-reminder-panel { left: 0; right: auto; max-width: 78vw; }
+  .jotdrop-compact-modal .jotdrop-compact-actions { flex-wrap: wrap; }
+}
