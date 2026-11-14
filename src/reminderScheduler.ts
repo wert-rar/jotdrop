@@ -11,6 +11,7 @@ import {
   RecurrenceState,
 } from "./recurrence";
 import { t } from "./i18n";
+import { conflictOriginal, isTrashed, under } from "./noteFiles";
 
 /**
  * Tracks window timeouts per note path so reminders can be rescheduled
@@ -38,6 +39,8 @@ export class ReminderScheduler {
 
   scheduleFile(file: TFile): void {
     this.cancelFile(file.path);
+    if (!under(file.path, normalizePath(this.plugin.settings.notesFolder)) ||
+      isTrashed(file.path, this.plugin.settings.notesFolder) || conflictOriginal(file.path)) return;
     // Archived notes never fire — parity with the Android app, which cancels
     // the alarm on archive. Covers load, modify AND rename-into-archive.
     const archive = normalizePath(this.plugin.settings.archiveFolder);

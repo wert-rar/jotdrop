@@ -9,3 +9,9 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## Local tools
+
+Drawing format/editor, line diff, duplicate matching and Excalidraw previews are adapted from Diexar-Labs/jotdrop tag 0.31.1 under the repository's MIT license. Duplicate matching is wrapped as a self-contained worker function and its equal-text search also obeys the result/time limits. Excalidraw rendering does not reset the user's shared scripting instance.
+
+Tesseract.js 7.0.0 and Tesseract.js-core 7.0.0 provide local OCR under Apache-2.0; their licenses and bundled dependency notices are included in the built plugin. Russian and English language models are from the official tessdata_fast repository, commit 87416418657359cb625c412a48b6e1d6d41c29bd, under Apache-2.0. Language downloads are data only and are checked against pinned SHA-256 hashes.

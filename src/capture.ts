@@ -464,8 +464,16 @@ export async function createNoteInFolder(app: App, folderPath: string, content: 
     await app.vault.createFolder(folder);
   }
   const fileName = generateFilename(content);
-  const fullPath = normalizePath(`${folder}/${fileName}`);
-  return await app.vault.create(fullPath, content);
+  for (let suffix = 0; ; suffix++) {
+    const name = suffix ? fileName.replace(/\.md$/, ` (${suffix + 1}).md`) : fileName;
+    const fullPath = normalizePath(`${folder}/${name}`);
+    if (app.vault.getAbstractFileByPath(fullPath)) continue;
+    try { return await app.vault.create(fullPath, content); }
+    catch (error) {
+      // Another capture or sync may have claimed this name after the check.
+      if (!app.vault.getAbstractFileByPath(fullPath)) throw error;
+    }
+  }
 }
 
 function generateFilename(content: string): string {

@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased] — plugin 0.22.0
+
+### Added
+
+- Local comparison of Syncthing `.sync-conflict` files with a split line diff, editable result, stale-file guards and recoverable copies of both original versions.
+- JotDrop Trash with restore and collision-safe filenames; deleted notes retain their attachments.
+- Photo notes and local Russian/English OCR. The recognition engine is bundled; verified language data is downloaded only after the user chooses recognition.
+- Editable PNG drawings and read-only Excalidraw card previews, plus adding photos/drawings to an existing note.
+- Local duplicate search in a disposable worker, and a lightweight week overview opened only on request.
+
+### Changed
+
+- Flat checklist cards display up to ten open tasks and fold completed tasks without changing the source order. Mixed Markdown and nested lists retain the fork's full rendering.
+
+### Fixed
+
+- Unrelated binary files and folders no longer refresh the board.
+- Repeated captures with the same title no longer collide within a timestamp second; photo attachment names are unique across simultaneous captures.
+- Background preview rescue, reminder scheduling and label operations leave conflict/recovery versions untouched.
+
 ## [0.21.2] - 2026-10-24
 
 Общий релиз **JotDrop 0.28.24**: плагин Obsidian **0.21.2** и Android **0.28.24**.

@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 
 const prod = process.argv[2] === "production";
 const root = path.dirname(fileURLToPath(import.meta.url));
-const bundledPackages = ["markdown-it", "mdurl", "uc.micro", "entities", "linkify-it", "punycode.js"];
+const bundledPackages = ["markdown-it", "mdurl", "uc.micro", "entities", "linkify-it", "punycode.js", "tesseract.js", "tesseract.js-core", "bmp-js", "idb-keyval", "is-url", "regenerator-runtime", "wasm-feature-detect", "zlibjs"];
 const notices = bundledPackages.map((name) => {
   const directory = path.join(root, "node_modules", name);
-  const license = fs.readdirSync(directory).find((file) => /^license(?:[.-]|$)/i.test(file));
+  const license = fs.readdirSync(directory).find((file) => /^licen[cs]e(?:[.-]|$)/i.test(file));
   if (!license) throw new Error(`Missing license for bundled package ${name}`);
   return `${name}\n${fs.readFileSync(path.join(directory, license), "utf8")}`;
 });
@@ -22,6 +22,7 @@ notices.push(nativeNotice);
 const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
+  loader: { ".min.js": "text", ".wasm.js": "text" },
   external: [
     "obsidian",
     "electron",

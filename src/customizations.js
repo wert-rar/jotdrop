@@ -1,5 +1,6 @@
 /* Fork features, compiled as a source module by esbuild. */
 import MarkdownIt from 'markdown-it';
+import { localText } from './i18n';
 
 const taskMarkdown = new MarkdownIt({ html: true });
 
@@ -36,6 +37,35 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, La
     lines[line] = lines[line].replace(/^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)([ xX])(\])/, (_, a, checked, b) => a + (checked === ' ' ? 'x' : ' ') + b);
     return lines.join('\n');
   }
+  function compactChecklist(target, markdown, openNote) {
+    const tokens = taskMarkdown.parse(markdown, {});
+    const roots = tokens.filter(token => token.level === 0 && token.nesting === 1);
+    // Keep mixed Markdown and nested lists exactly as Obsidian rendered them.
+    if (roots.length !== 1 || !['bullet_list_open', 'ordered_list_open'].includes(roots[0].type)) return () => {};
+    const list = [...target.children].find(el => el.matches('ul, ol'));
+    if (!list) return () => {};
+    const items = [...list.children];
+    if (!items.length || items.some(item => !item.matches('li.task-list-item') || item.querySelector('ul, ol'))) return () => {};
+    const boxes = items.map(item => item.querySelector('input.task-list-item-checkbox'));
+    if (boxes.some(box => !box)) return () => {};
+    const checked = target.createEl('details', { cls: 'jotdrop-checked-tasks' });
+    const summary = checked.createEl('summary');
+    const doneList = checked.createEl(list.tagName.toLowerCase());
+    const more = target.createEl('button', { cls: 'jotdrop-more-tasks' });
+    more.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openNote(); });
+    // A summary expands completed tasks instead of opening the note editor.
+    summary.addEventListener('click', event => event.stopPropagation());
+    return () => {
+      const todo = items.filter((item, i) => !boxes[i].checked);
+      const done = items.filter((item, i) => boxes[i].checked);
+      list.replaceChildren(...todo.slice(0, 10));
+      doneList.replaceChildren(...done);
+      checked.hidden = done.length === 0;
+      summary.textContent = localText(`+ ${done.length} checked items`, `+ ${done.length} выполнено`);
+      more.hidden = todo.length <= 10;
+      more.textContent = localText(`Open note — ${todo.length - 10} more tasks`, `Открыть заметку — ещё ${todo.length - 10} задач`);
+    };
+  }
   async function renderMarkdown(owner, parent, markdown, target, path, onTask) {
     const component = new Component();
     parent.addChild(component);
@@ -43,6 +73,7 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, La
     await MarkdownRenderer.render(owner.app, markdown, target, path, component);
     const checkboxes = [...target.querySelectorAll('input.task-list-item-checkbox')]
       .filter(box => !box.closest('.internal-embed'));
+    let updateChecklist = () => {};
     checkboxes.forEach((box, index) => {
       box.disabled = false;
       box.addEventListener('click', event => {
@@ -55,9 +86,16 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, La
             item.classList.toggle('is-checked', checked);
             item.dataset.task = checked ? 'x' : ' ';
           }
+          updateChecklist();
         }).catch(reportError);
       }, true);
     });
+    updateChecklist = compactChecklist(target, markdown, () => {
+      const card = target.closest('.jotdrop-card');
+      const file = card?.jotdropData?.file;
+      if (file) owner.openEditModal(file);
+    });
+    updateChecklist();
     target.addEventListener('click', event => {
       const link = event.target.closest('a');
       if (!link) return;

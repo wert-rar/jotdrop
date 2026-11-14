@@ -1,6 +1,6 @@
 {
   "name": "jotdrop",
-  "version": "0.21.2",
+  "version": "0.22.0",
   "description": "A private, open-source Google Keep alternative for Obsidian: a trio of quick-capture card grid, companion Android app, and Chrome web clipper. Install all three for the full Keep experience.",
   "main": "main.js",
   "scripts": {
@@ -13,7 +13,9 @@
     "verify:tag": "node scripts/verify-release-tag.mjs",
     "check:list-preview": "node scripts/check-list-preview.cjs",
     "check:archive": "node scripts/check-archive.cjs",
-    "check:integration": "npm run check:archive && npm run check:hashtags && npm run check:plugin-labels && npm run check:recurrence && npm run check:preview-fallback && npm run check:keep-import && npm run check:markdown-import && npm run check:evernote-import && npm run check:mobile-keyboard && npm run check:toolbar",
+    "check:integration": "npm run check:archive && npm run check:hashtags && npm run check:plugin-labels && npm run check:recurrence && npm run check:preview-fallback && npm run check:keep-import && npm run check:markdown-import && npm run check:evernote-import && npm run check:mobile-keyboard && npm run check:toolbar && node scripts/check-local-notes.cjs",
+    "check:local": "node scripts/check-local-notes.cjs && node scripts/check-local-tools-browser.cjs",
+    "check:ocr": "node scripts/check-local-tools-browser.cjs --ocr",
     "check:board-updates": "node scripts/check-board-updates.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
     "package:web-clipper": "node scripts/package-web-clipper.mjs",
@@ -55,6 +57,7 @@
     "esbuild": "^0.28.2",
     "obsidian": "latest",
     "playwright": "1.63.0",
+    "tesseract.js": "7.0.0",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"
   },
