@@ -30,6 +30,7 @@ export function restorePath(path: string, notesFolder: string): string | null {
 export interface WeekNote {
   path: string;
   title: string;
+  created: number;
   modified: number;
   content: string;
   reminder: number | null;
@@ -39,24 +40,24 @@ export interface WeekNote {
 export function weekOverview(notes: WeekNote[], now: number) {
   const since = now - 7 * 86400000;
   const until = now + 7 * 86400000;
+  const created = notes.filter(note => note.created >= since && note.created <= now)
+    .sort((a, b) => b.created - a.created || a.path.localeCompare(b.path));
+  let openTasks = 0;
+  for (const note of notes) {
+    let fence = "";
+    for (const line of note.content.split(/\r?\n/)) {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = "";
+      } else if (!fence && /^\s*(?:[-+*]|\d+[.)])\s+\[ \]\s+\S/.test(line)) openTasks++;
+    }
+  }
   return {
-    changed: notes.filter(note => note.modified >= since && note.modified <= now)
-      .sort((a, b) => b.modified - a.modified),
-    tasks: notes.flatMap(note => {
-      // Code examples are not tasks. Markdown-it in the UI supplies exact task source maps.
-      let fence = "";
-      return note.content.split(/\r?\n/).flatMap(line => {
-        const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
-        if (marker) {
-          if (!fence) fence = marker[1];
-          else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = "";
-          return [];
-        }
-        const task = !fence && line.match(/^\s*(?:[-+*]|\d+[.)])\s+\[ \]\s+(.+)/);
-        return task ? [{ note, text: task[1] }] : [];
-      });
-    }),
-    reminders: notes.filter(note => note.reminder !== null && note.reminder <= until)
-      .sort((a, b) => a.reminder! - b.reminder!),
+    created: created.length,
+    changed: notes.filter(note => note.modified >= since && note.modified <= now).length,
+    openTasks,
+    reminders: notes.filter(note => note.reminder !== null && note.reminder <= until).length,
+    newest: created.slice(0, 10),
   };
 }

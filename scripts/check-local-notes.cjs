@@ -129,12 +129,15 @@ const esbuild = require('esbuild');
 
   const now = Date.parse('2026-11-15T12:00:00Z');
   const overview = weekOverview([
-    { path: 'a', title: 'A', modified: now, content: '- [ ] task\n```md\n- [ ] example\n```\n- [x] done', reminder: now - 1000 },
-    { path: 'b', title: 'B', modified: now - 8 * 86400000, content: '', reminder: now + 8 * 86400000 },
+    { path: 'a', title: 'A', created: now - 1000, modified: now, content: '- [ ] task\n```md\n- [ ] example\n```\n- [x] done', reminder: now - 1000 },
+    { path: 'b', title: 'B', created: now - 200, modified: now - 100, content: '', reminder: now + 8 * 86400000 },
+    { path: 'old', title: 'Old but edited', created: now - 8 * 86400000, modified: now, content: '', reminder: null },
   ], now);
-  assert.equal(overview.changed.length, 1);
-  assert.deepEqual(overview.tasks.map(task => task.text), ['task']);
-  assert.equal(overview.reminders.length, 1);
+  assert.equal(overview.created, 2);
+  assert.equal(overview.changed, 3);
+  assert.equal(overview.openTasks, 1, 'Code examples and checked tasks are not open tasks');
+  assert.equal(overview.reminders, 1);
+  assert.deepEqual(overview.newest.map(note => note.path), ['b', 'a'], 'New notes are sorted by creation, not modification');
 
   const png = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC2kAAAAASUVORK5CYII=', 'base64'));
   const drawing = { width: 1080, height: 1440, strokes: [{ color: '#2563eb', size: 14, points: [1, 2, 30, 40] }] };

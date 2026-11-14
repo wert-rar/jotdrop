@@ -16,7 +16,7 @@ Full Obsidian Markdown rendering; native Live Preview with Save/Archive drafts a
 Plugin 0.21.2 adds recurring reminders in the compact bell panel, label management and picking, Keep/Markdown/Evernote import, preservation of typed hashtags, collision-safe archive/restore and link-preview/mobile-keyboard fixes. The fork keeps `jotdrop_order` and local column placement; unchanged Android uses upstream `order`, so manual ordering is not shared across the two applications.
 
 ## Development
-Unreleased plugin 0.22.0 adds local Syncthing conflict comparison, recoverable Trash, photo notes with Russian/English on-device OCR, editable PNG drawings and read-only Excalidraw previews, on-demand duplicate search and a simple local week overview. It does not add JotDrop Cloud or AI. New tools are available from the board's **More** menu and the command palette; photos and drawings can also be added from a card's menu. See [Local tools](docs/local-tools.md).
+Unreleased plugin 0.22.1 includes local Syncthing conflict comparison, recoverable Trash, photo notes with Russian/English on-device OCR, editable PNG drawings and read-only Excalidraw previews, on-demand duplicate search and a compact local week overview. It does not add JotDrop Cloud or AI. Tools are available as six icon buttons beside the sort/label controls and from the command palette; photos and drawings can also be added from a card's menu. See [Local tools](docs/local-tools.md).
 
 Run `npm ci`, `npm run build`, then `npm run check:fork`. The browser fixture needs Playwright available to Node and installed Microsoft Edge. It runs the production bundle with mocked Obsidian services and disposable notes. No real vault is accessed.
 

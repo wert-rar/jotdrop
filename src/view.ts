@@ -405,7 +405,7 @@ export class JotDropView extends ItemView {
   private lastColumnCount = 0;
   private resizeTimer: number | null = null;
   private searchTimer: number | null = null;
-  private localToolsButton: HTMLButtonElement | null = null;
+  private conflictsButton: HTMLButtonElement | null = null;
   private excalidrawPreviewsInstance: ExcalidrawPreviews | null = null;
   private get excalidrawPreviews(): ExcalidrawPreviews {
     return this.excalidrawPreviewsInstance ??= new ExcalidrawPreviews(this.app);
@@ -475,17 +475,18 @@ export class JotDropView extends ItemView {
       this.showLabelMenu(e);
     });
 
-    this.localToolsButton = localToolButton(this.normalToolbarEl, "ellipsis", l("More tools", "Ещё"), () => {
-      const menu = new Menu();
-      const add = (label: string, icon: string, action: () => void) => menu.addItem(item => item.setTitle(label).setIcon(icon).onClick(action));
-      add(l("Photo and text recognition", "Фото и распознавание текста"), "camera", () => this.plugin.captureTools.pickPhoto());
-      add(l("Draw a note", "Нарисовать заметку"), "pencil", () => this.plugin.captureTools.draw());
-      add(l("Syncthing conflicts", "Конфликты Syncthing"), "git-compare", () => new ConflictsModal(this.app, this.plugin).open());
-      add(l("Find duplicate notes", "Найти дубликаты"), "copy", () => new DuplicatesModal(this.app, this.plugin).open());
-      add(l("Week overview", "Обзор недели"), "calendar-days", () => new WeekModal(this.app, this.plugin).open());
-      add(l("Trash", "Корзина"), "trash-2", () => new TrashModal(this.app, this.plugin).open());
-      menu.showAtPosition({ x: this.normalToolbarEl.getBoundingClientRect().right - 30, y: this.normalToolbarEl.getBoundingClientRect().bottom });
-    });
+    const tools = this.normalToolbarEl.createDiv({ cls: "jotdrop-local-tools" });
+    const addTool = (name: string, icon: string, label: string, action: () => void) => {
+      const button = localToolButton(tools, icon, label, action);
+      button.dataset.localTool = name;
+      return button;
+    };
+    addTool("photo", "camera", l("Photo and text recognition", "Фото и распознавание текста"), () => this.plugin.captureTools.pickPhoto());
+    addTool("drawing", "pencil", l("Draw a note", "Нарисовать заметку"), () => this.plugin.captureTools.draw());
+    this.conflictsButton = addTool("conflicts", "git-compare", l("Syncthing conflicts", "Конфликты Syncthing"), () => new ConflictsModal(this.app, this.plugin).open());
+    addTool("duplicates", "copy", l("Find duplicate notes", "Найти дубликаты"), () => new DuplicatesModal(this.app, this.plugin).open());
+    addTool("week", "calendar-days", l("Week overview", "Обзор недели"), () => new WeekModal(this.app, this.plugin).open());
+    addTool("trash", "trash-2", l("Trash", "Корзина"), () => new TrashModal(this.app, this.plugin).open());
 
 
     this.selectionToolbarEl = root.createDiv({
@@ -1639,11 +1640,11 @@ export class JotDropView extends ItemView {
       if (inArchive && !showArchived) return false;
       return true;
     });
-    if (this.localToolsButton) {
-      this.localToolsButton.dataset.conflicts = String(conflicts);
-      const label = conflicts ? l(`More tools; Syncthing conflicts: ${conflicts}`, `Ещё; конфликтов Syncthing: ${conflicts}`) : l("More tools", "Ещё");
-      this.localToolsButton.setAttribute("aria-label", label);
-      this.localToolsButton.title = label;
+    if (this.conflictsButton) {
+      this.conflictsButton.dataset.conflicts = String(conflicts);
+      const label = conflicts ? l(`Syncthing conflicts: ${conflicts}`, `Конфликтов Syncthing: ${conflicts}`) : l("Syncthing conflicts", "Конфликты Syncthing");
+      this.conflictsButton.setAttribute("aria-label", label);
+      this.conflictsButton.title = label;
     }
 
     const sorted = sortFiles(all, this.plugin.settings.sortMode);
@@ -1767,6 +1768,8 @@ export class JotDropView extends ItemView {
       let current = attachment;
       const fallbacks = [...attachment.fallbacks];
       img.src = current.resourcePath;
+      img.dataset.vaultPath = current.vaultPath;
+      img.dataset.embedLink = thumbnailBasename!;
       img.alt = "";
       img.loading = "lazy";
       // Keep large photo decodes off the main thread during scrolling.
@@ -1779,6 +1782,7 @@ export class JotDropView extends ItemView {
           current = { resourcePath: next.resourcePath, file: null, vaultPath: next.vaultPath, fallbacks: [] };
           openedAttachment = current;
           img.src = next.resourcePath;
+          img.dataset.vaultPath = next.vaultPath;
         } else {
           thumbWrap.remove();
         }

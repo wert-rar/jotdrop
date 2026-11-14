@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased] — plugin 0.22.1
+
+### Changed
+
+- All six local tools are direct icon buttons beside the board's sort/label controls; Syncthing conflict counts appear on their own icon.
+- Week overview shows four statistics and at most ten notes created in the last seven days, newest first, instead of unbounded lists of changed notes, tasks and reminders.
+
+### Fixed
+
+- Image/drawing cards no longer show their cover twice: the first matching rendered image is omitted from the Markdown preview, preserving other images and source content.
+
 ## [Unreleased] — plugin 0.22.0
 
 ### Added

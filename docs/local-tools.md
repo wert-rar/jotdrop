@@ -1,6 +1,6 @@
-# Local tools in fork plugin 0.22.0
+# Local tools in fork plugin 0.22.1
 
-Open **More** (the three dots) in the board toolbar, or use the corresponding JotDrop command. These features use local Markdown files and need no JotDrop Cloud account or AI key.
+Use the six icon buttons beside the sort/label controls in the board toolbar, or the corresponding JotDrop command. These features use local Markdown files and need no JotDrop Cloud account or AI key. The Syncthing icon shows the number of unresolved conflicts.
 
 ## Syncthing conflicts
 
@@ -25,7 +25,7 @@ Trash and unresolved conflict copies are excluded from normal cards, duplicates,
 
 Duplicate search runs only when opened, in a disposable worker, with a four-second search budget and a maximum of 500 pairs. It finds equal/near text and notes contained in others; notes shorter than 40 characters are skipped. Compare never changes a note. Moving a suggested duplicate to Trash requires confirmation and rejects a changed note. **Skip this pair** hides it for the current search only. No AI is used.
 
-Week overview is a simple on-demand list: notes changed in the last seven days, open tasks and reminders due over the next seven days, including overdue reminders. Archived notes are excluded. There is no background index, timer or stored summary.
+Week overview shows four statistics: notes created and changed in the last seven days, all open tasks, and reminders due over the next seven days including overdue reminders. Below them are at most ten notes created within the last seven days, ordered by creation time. Archived notes are excluded. There is no background index, timer or stored summary.
 
 ## Cards and verification
 

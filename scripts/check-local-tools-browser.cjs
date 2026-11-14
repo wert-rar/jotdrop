@@ -52,7 +52,7 @@ async function checks({ app, plugin, metadata, text, makeView, assert, tick, run
   const trashed = note('Trash/123/Grail/Old', '# removed');
   plugin.refreshViews(); await board.render();
   assert(!board.lastFiltered.some(card => card.file === conflict || card.file === trashed), 'conflict copies and Trash are not normal board cards');
-  assert(board.localToolsButton.dataset.conflicts === '1', 'the toolbar signals unresolved Syncthing conflicts');
+  assert(board.normalToolbarEl.querySelector('[data-local-tool="conflicts"]').dataset.conflicts === '1', 'the toolbar signals unresolved Syncthing conflicts');
 
   const real = new classes.default();
   Object.assign(real, { app, settings: plugin.settings });

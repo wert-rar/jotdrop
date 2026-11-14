@@ -71,6 +71,24 @@ export function installJotDropCustomizations({ EditModal, CaptureModal, View, La
     parent.addChild(component);
     owner.markdownComponents.push({ parent, component, target });
     await MarkdownRenderer.render(owner.app, markdown, target, path, component);
+    // The cover already displays this attachment. Remove only its first
+    // rendered repetition; other images and the note's Markdown stay intact.
+    const cover = target.closest('.jotdrop-card')?.querySelector('.jotdrop-card-thumbnail img');
+    if (cover) {
+      const resource = url => url.split('?')[0];
+      const linked = [...target.querySelectorAll('.internal-embed[src]')].find(embed => {
+        if (embed.closest('.markdown-embed')) return false;
+        const link = embed.getAttribute('src').split(/[|#]/)[0];
+        return link === cover.dataset.vaultPath || link === cover.dataset.embedLink;
+      });
+      const duplicate = linked || [...target.querySelectorAll('img')].find(image => !image.closest('.markdown-embed') && resource(image.src) === resource(cover.src));
+      if (duplicate) {
+        const embed = duplicate.closest('.image-embed') || duplicate;
+        const paragraph = embed.closest('p');
+        embed.remove();
+        if (paragraph && !paragraph.textContent.trim() && !paragraph.children.length) paragraph.remove();
+      }
+    }
     const checkboxes = [...target.querySelectorAll('input.task-list-item-checkbox')]
       .filter(box => !box.closest('.internal-embed'));
     let updateChecklist = () => {};

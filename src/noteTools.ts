@@ -218,6 +218,7 @@ export class WeekModal extends Modal {
   constructor(app: App, private plugin: JotDropPlugin) { super(app); }
   async onOpen(): Promise<void> {
     this.titleEl.setText(l("Week overview", "Обзор недели"));
+    this.modalEl.addClass("jotdrop-week-modal");
     const status = this.contentEl.createEl("p", { text: l("Collecting notes…", "Собираю заметки…") });
     try {
       const notes = [];
@@ -225,26 +226,46 @@ export class WeekModal extends Modal {
         if (this.closed) return;
         const content = await this.app.vault.cachedRead(file);
         const reminder = parseReminderMs(readMeta(this.app, file).reminder);
-        notes.push({ path: file.path, title: extractTitle(content, file.basename), modified: file.stat.mtime,
+        notes.push({ path: file.path, title: extractTitle(content, file.basename), created: file.stat.ctime, modified: file.stat.mtime,
           content: stripFrontmatter(content), reminder: Number.isFinite(reminder) ? reminder : null });
       }
       if (this.closed) return;
+      const now = Date.now();
+      const overview = weekOverview(notes, now);
+      const date = new Intl.DateTimeFormat(l("en", "ru"), { day: "numeric", month: "short" });
+      this.contentEl.createEl("p", { cls: "jotdrop-week-period", text: `${date.format(now - 7 * 86400000)} — ${date.format(now)}` });
+      const stats = this.contentEl.createDiv({ cls: "jotdrop-week-stats" });
+      for (const [key, value, label, icon] of [
+        ["created", overview.created, l("Created", "Создано"), "file-plus"],
+        ["changed", overview.changed, l("Changed", "Изменено"), "pencil"],
+        ["tasks", overview.openTasks, l("Open tasks", "Открытых задач"), "list-todo"],
+        ["reminders", overview.reminders, l("Reminders", "Напоминаний"), "bell"],
+      ] as const) {
+        const stat = stats.createDiv({ cls: "jotdrop-week-stat" });
+        stat.dataset.weekStat = key;
+        setIcon(stat.createSpan({ cls: "jotdrop-week-stat-icon" }), icon);
+        stat.createEl("strong", { text: String(value) });
+        stat.createSpan({ text: label });
+      }
+      this.contentEl.createEl("p", { cls: "jotdrop-week-hint", text: l("Reminders: next 7 days, including overdue.", "Напоминания — на ближайшие 7 дней, включая просроченные.") });
+      const heading = this.contentEl.createDiv({ cls: "jotdrop-week-heading" });
+      heading.createEl("h3", { text: l("New notes", "Новые заметки") });
+      if (overview.created > 10) heading.createSpan({ text: l(`10 of ${overview.created}`, `10 из ${overview.created}`) });
+      const list = this.contentEl.createEl("ol", { cls: "jotdrop-week-notes" });
+      for (const note of overview.newest) {
+        const row = list.createEl("li");
+        const link = row.createEl("a", { cls: "jotdrop-week-note", attr: { href: "#", title: note.title } });
+        setIcon(link.createSpan({ cls: "jotdrop-week-note-icon" }), "file-text");
+        link.createSpan({ cls: "jotdrop-week-note-title", text: note.title });
+        link.createEl("time", { text: date.format(note.created), attr: { datetime: new Date(note.created).toISOString() } });
+        setIcon(link.createSpan({ cls: "jotdrop-week-note-open" }), "arrow-up-right");
+        link.addEventListener("click", event => {
+          event.preventDefault();
+          runLocal(async () => { await this.app.workspace.openLinkText(note.path, "", true); });
+        });
+      }
+      if (!overview.newest.length) this.contentEl.createEl("p", { cls: "jotdrop-week-empty", text: l("No notes created in the last 7 days.", "За последние 7 дней новых заметок нет.") });
       status.remove();
-      this.contentEl.createEl("p", { text: l("Last 7 days, open tasks and reminders due within the next 7 days (including overdue). No AI or background indexing.", "Изменения за 7 дней, открытые задачи и напоминания на ближайшие 7 дней, включая просроченные. Без ИИ и фоновой индексации.") });
-      const overview = weekOverview(notes, Date.now());
-      const link = (parent: HTMLElement, path: string, title: string) => {
-        const el = parent.createEl("a", { text: title, href: "#" });
-        el.addEventListener("click", event => { event.preventDefault(); runLocal(async () => { await this.app.workspace.openLinkText(path, "", true); }); });
-      };
-      this.contentEl.createEl("h3", { text: l("Changed notes", "Изменённые заметки") });
-      for (const note of overview.changed) link(this.contentEl.createDiv(), note.path, note.title);
-      if (!overview.changed.length) this.contentEl.createEl("p", { text: l("No changes.", "Изменений нет.") });
-      this.contentEl.createEl("h3", { text: l("Open tasks", "Открытые задачи") });
-      for (const { note, text } of overview.tasks) link(this.contentEl.createDiv(), note.path, `${text} — ${note.title}`);
-      if (!overview.tasks.length) this.contentEl.createEl("p", { text: l("No open tasks.", "Открытых задач нет.") });
-      this.contentEl.createEl("h3", { text: l("Reminders", "Напоминания") });
-      for (const note of overview.reminders) link(this.contentEl.createDiv(), note.path, `${new Date(note.reminder!).toLocaleString()} — ${note.title}`);
-      if (!overview.reminders.length) this.contentEl.createEl("p", { text: l("No reminders.", "Напоминаний нет.") });
     } catch (error) { status.setText(String(error)); }
   }
   onClose(): void { this.closed = true; this.contentEl.empty(); }
