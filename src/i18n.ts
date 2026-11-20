@@ -13,6 +13,11 @@
 
 import { getLanguage } from "obsidian";
 
+/** Text for the optional local tools; existing translations stay with their own tables. */
+export function localText(en: string, ru: string): string {
+  return getLanguage().split("-")[0] === "ru" ? ru : en;
+}
+
 export type Lang = "en" | "nl" | "es" | "de" | "fr" | "it";
 
 const SUPPORTED: ReadonlyArray<Lang> = ["en", "nl", "es", "de", "fr", "it"];

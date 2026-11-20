@@ -34,15 +34,26 @@ import * as obsidian from "obsidian";
 import { EditNoteModal } from "./edit";
 import { stripFrontmatter } from "./metadata";
 import { installJotDropCustomizations } from "./customizations.js";
+import { LocalNotes } from "./localNotes";
+import { CaptureTools } from "./captureTools";
+import { ConflictsModal, DuplicatesModal, TrashModal, WeekModal } from "./noteTools";
+import { localText as l } from "./i18n";
+import { conflictOriginal, isTrashed } from "./noteFiles";
 
 installJotDropCustomizations({ EditModal: EditNoteModal, CaptureModal: QuickCaptureModal, View: JotDropView, LabelPicker: LabelPickerModal, obsidian, t, stripFrontmatter });
 // Stable exports let regressions exercise the production bundle without minified names.
 export { EditNoteModal, QuickCaptureModal, JotDropView };
 export { extractPreview } from "./view";
+export { LocalNotes } from "./localNotes";
+export { ConflictsModal, DuplicatesModal, CompareNotesModal, TrashModal, WeekModal } from "./noteTools";
+export { CaptureTools, DrawingModal, PhotoModal } from "./captureTools";
+export { LocalOcr } from "./ocr";
 
 export default class JotDropPlugin extends Plugin {
   cardsVersion = 0;
   settings!: JotDropSettings;
+  localNotes!: LocalNotes;
+  captureTools!: CaptureTools;
   private refreshTimer: number | null = null;
   // Paths whose next modify-event should be ignored: used during in-place
   // updates (e.g. color change) so the grid does not re-sort due to mtime bump.
@@ -53,6 +64,8 @@ export default class JotDropPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.localNotes = new LocalNotes(this);
+    this.captureTools = new CaptureTools(this);
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
@@ -73,6 +86,15 @@ export default class JotDropPlugin extends Plugin {
     });
 
     this.addSettingTab(new JotDropSettingTab(this.app, this));
+
+    for (const command of [
+      { id: "syncthing-conflicts", name: l("Compare Syncthing conflicts", "Сравнить конфликты Syncthing"), callback: () => new ConflictsModal(this.app, this).open() },
+      { id: "jotdrop-trash", name: l("Open Trash", "Открыть корзину"), callback: () => new TrashModal(this.app, this).open() },
+      { id: "find-duplicates", name: l("Find duplicate notes", "Найти дубликаты заметок"), callback: () => new DuplicatesModal(this.app, this).open() },
+      { id: "week-overview", name: l("Week overview (local)", "Обзор недели (локально)"), callback: () => new WeekModal(this.app, this).open() },
+      { id: "photo-note", name: l("Photo and text recognition", "Фото и распознавание текста"), callback: () => this.captureTools.pickPhoto() },
+      { id: "draw-note", name: l("Draw a note", "Нарисовать заметку"), callback: () => this.captureTools.draw() },
+    ]) this.addCommand(command);
 
     this.reminderScheduler = new ReminderScheduler(this);
     this.clipServer = new ClipServer(this);
@@ -305,7 +327,7 @@ export default class JotDropPlugin extends Plugin {
   async neutralizeExistingHashtags(): Promise<void> {
     const root = normalizePath(this.settings.notesFolder);
     const files = this.app.vault.getMarkdownFiles().filter((f) =>
-      f.path === root || f.path.startsWith(`${root}/`),
+      (f.path === root || f.path.startsWith(`${root}/`)) && !isTrashed(f.path, root) && !conflictOriginal(f.path),
     );
     let changed = 0;
     for (const file of files) {
@@ -580,6 +602,7 @@ export default class JotDropPlugin extends Plugin {
         const link = ref.link.split("#")[0];
         const target = this.app.metadataCache.getFirstLinkpathDest(link, note.path)?.path;
         if (paths.some(path => target === path || target?.startsWith(path + "/") ||
+          (/\.excalidraw\.md$/i.test(target ?? "") && [".png", ".svg"].some(ext => path === target!.slice(0, -3) + ext)) ||
           path.replace(/\.md$/, "") === link.replace(/\.md$/, "") ||
           path.split("/").pop()!.replace(/\.md$/, "") === link.replace(/\.md$/, ""))) return true;
       }
@@ -590,13 +613,14 @@ export default class JotDropPlugin extends Plugin {
   handleVaultChange(file: TAbstractFile, oldPath?: string, schedule = true): void {
     const paths = oldPath === undefined ? [file.path] : [oldPath, file.path];
     const root = normalizePath(this.settings.notesFolder);
+    const assets = this.resolveAssetsFolder();
     if (paths.some(path => this.isNotePath(path) || root.startsWith(path + "/"))) {
       if (file instanceof TFile && file.extension !== "md") {
         this.refreshViews({ kind: "assets" }, schedule);
       } else {
         this.refreshViews({ kind: "files", paths }, schedule);
       }
-    } else if (!(file instanceof TFile) || file.extension !== "md" || this.referencesBoardFile(paths)) {
+    } else if (paths.some(path => path === assets || path.startsWith(assets + "/") || assets.startsWith(path + "/")) || this.referencesBoardFile(paths)) {
       this.refreshViews({ kind: "assets" }, schedule);
     }
   }

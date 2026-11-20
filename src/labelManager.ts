@@ -1,6 +1,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { readLabels, readMeta } from "./metadata";
 import { t } from "./i18n";
+import { conflictOriginal, isTrashed } from "./noteFiles";
 
 export interface LabelInfo {
   name: string;
@@ -35,6 +36,7 @@ export async function discoverLabels(
 
   for (const file of app.vault.getMarkdownFiles()) {
     if (!isUnder(file.path, root) && !isUnder(file.path, archive)) continue;
+    if (isTrashed(file.path, root) || conflictOriginal(file.path)) continue;
     try {
       const meta = readMeta(app, file);
       for (const label of meta.labels) {
@@ -110,6 +112,7 @@ export async function renameLabel(
 
   for (const file of app.vault.getMarkdownFiles()) {
     if (!isUnder(file.path, root) && !isUnder(file.path, archive)) continue;
+    if (isTrashed(file.path, root) || conflictOriginal(file.path)) continue;
     try {
       let changed = false;
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
@@ -148,6 +151,7 @@ export async function deleteLabel(
 
   for (const file of app.vault.getMarkdownFiles()) {
     if (!isUnder(file.path, root) && !isUnder(file.path, archive)) continue;
+    if (isTrashed(file.path, root) || conflictOriginal(file.path)) continue;
     try {
       let changed = false;
       await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {

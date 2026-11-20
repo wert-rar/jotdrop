@@ -2,6 +2,7 @@ import { Notice, TAbstractFile, TFile } from "obsidian";
 import { fetchOg, buildLinkNote, detectUrl } from "./ogfetch";
 import type JotDropPlugin from "./main";
 import { t } from "./i18n";
+import { conflictOriginal, isTrashed } from "./noteFiles";
 
 /**
  * Picks up placeholder notes sent by Android v0.6.0+ via Syncthing
@@ -34,11 +35,25 @@ export class PreviewRescue {
 
   constructor(private plugin: JotDropPlugin) {}
 
+  private excluded(file: TFile): boolean {
+    return isTrashed(file.path, this.plugin.settings.notesFolder) || conflictOriginal(file.path) !== null;
+  }
+
   start(): void {
     const { vault } = this.plugin.app;
     this.plugin.registerEvent(vault.on("create", this.onChange));
     this.plugin.registerEvent(vault.on("modify", this.onChange));
     this.plugin.registerEvent(vault.on("delete", this.onDelete));
+    this.plugin.registerEvent(vault.on("rename", (file, oldPath) => {
+      const timer = this.pending.get(oldPath);
+      if (timer !== undefined) window.clearTimeout(timer);
+      this.pending.delete(oldPath);
+      this.onChange(file);
+    }));
+    this.plugin.register(() => {
+      for (const timer of this.pending.values()) window.clearTimeout(timer);
+      this.pending.clear();
+    });
 
     // On plugin load: scan existing pending notes. May have arrived via
     // Syncthing while the plugin was off.
@@ -76,6 +91,7 @@ export class PreviewRescue {
     const files = this.plugin.app.vault.getMarkdownFiles();
     let count = 0;
     for (const file of files) {
+      if (this.excluded(file)) continue;
       let content: string;
       try {
         content = await this.plugin.app.vault.read(file);
@@ -96,6 +112,7 @@ export class PreviewRescue {
   }
 
   private async maybeSchedule(file: TFile): Promise<void> {
+    if (this.excluded(file)) return;
     let content: string;
     try {
       content = await this.plugin.app.vault.read(file);
@@ -130,6 +147,7 @@ export class PreviewRescue {
   }
 
   private async rescue(file: TFile): Promise<void> {
+    if (this.excluded(file)) return;
     let content: string;
     try {
       content = await this.plugin.app.vault.read(file);
@@ -150,7 +168,7 @@ export class PreviewRescue {
 
     const attachmentsFolder = this.plugin.resolveAssetsFolder();
     const preview = await fetchOg(this.plugin.app, attachmentsFolder, url, this.plugin.settings.downloadImages);
-    if (!preview) return;
+    if (!preview || this.excluded(file)) return;
 
     // Race check: read once more just before the write — if the marker
     // disappeared between fetch and write, do not overwrite.
@@ -168,7 +186,8 @@ export class PreviewRescue {
     const fm = fmMatch ? fmMatch[0] : "";
     const newContent = fm + buildLinkNote(url, preview, url);
     try {
-      await this.plugin.app.vault.modify(file, newContent);
+      await this.plugin.app.vault.process(file, current =>
+        this.excluded(file) || current !== latest ? current : newContent);
     } catch (e) {
       console.error("JotDrop preview-rescue: write failed for", file.path, e);
     }

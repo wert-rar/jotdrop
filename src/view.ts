@@ -28,6 +28,10 @@ import {
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { t } from "./i18n";
+import { localText as l } from "./i18n";
+import { conflictOriginal, isTrashed } from "./noteFiles";
+import { ConflictsModal, DuplicatesModal, TrashModal, WeekModal, localToolButton } from "./noteTools";
+import { ExcalidrawPreviews, drawingEmbedBeforeImage, drawingTitle } from "./excalidraw";
 
 export const VIEW_TYPE_JOTDROP = "jotdrop-view";
 
@@ -401,6 +405,11 @@ export class JotDropView extends ItemView {
   private lastColumnCount = 0;
   private resizeTimer: number | null = null;
   private searchTimer: number | null = null;
+  private conflictsButton: HTMLButtonElement | null = null;
+  private excalidrawPreviewsInstance: ExcalidrawPreviews | null = null;
+  private get excalidrawPreviews(): ExcalidrawPreviews {
+    return this.excalidrawPreviewsInstance ??= new ExcalidrawPreviews(this.app);
+  }
 
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
@@ -465,6 +474,19 @@ export class JotDropView extends ItemView {
       e.stopPropagation();
       this.showLabelMenu(e);
     });
+
+    const tools = this.normalToolbarEl.createDiv({ cls: "jotdrop-local-tools" });
+    const addTool = (name: string, icon: string, label: string, action: () => void) => {
+      const button = localToolButton(tools, icon, label, action);
+      button.dataset.localTool = name;
+      return button;
+    };
+    addTool("photo", "camera", l("Photo and text recognition", "Фото и распознавание текста"), () => this.plugin.captureTools.pickPhoto());
+    addTool("drawing", "pencil", l("Draw a note", "Нарисовать заметку"), () => this.plugin.captureTools.draw());
+    this.conflictsButton = addTool("conflicts", "git-compare", l("Syncthing conflicts", "Конфликты Syncthing"), () => new ConflictsModal(this.app, this.plugin).open());
+    addTool("duplicates", "copy", l("Find duplicate notes", "Найти дубликаты"), () => new DuplicatesModal(this.app, this.plugin).open());
+    addTool("week", "calendar-days", l("Week overview", "Обзор недели"), () => new WeekModal(this.app, this.plugin).open());
+    addTool("trash", "trash-2", l("Trash", "Корзина"), () => new TrashModal(this.app, this.plugin).open());
 
 
     this.selectionToolbarEl = root.createDiv({
@@ -812,10 +834,7 @@ export class JotDropView extends ItemView {
 
   private async bulkDelete(): Promise<void> {
     const paths = Array.from(this.selectedPaths);
-    // Refcount set pre-computed once: OG thumbnails are URL-hashed and can be
-    // shared between cards. Only attachments that are not referenced anywhere
-    // outside the selection may go to the trash.
-    const stillReferenced = await this.collectReferencedAttachmentBasenames(new Set(paths));
+    // Soft deletion preserves every attachment for restoration and shared notes.
     let ok = 0;
     let fail = 0;
     for (const path of paths) {
@@ -825,7 +844,7 @@ export class JotDropView extends ItemView {
         continue;
       }
       try {
-        await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
+        await this.plugin.localNotes.trash(file);
         ok++;
       } catch {
         fail++;
@@ -833,69 +852,6 @@ export class JotDropView extends ItemView {
     }
     this.reportBulkResult("notice_bulk_deleted", ok, fail);
     this.exitSelection();
-  }
-
-  /**
-   * Scans all markdown files in the vault — excluding [excludePaths] —
-   * and returns the set of attachment basenames still in use. Mirrors
-   * Storage.collectReferencedAttachments() in the Android app.
-   */
-  private async collectReferencedAttachmentBasenames(
-    excludePaths: Set<string>,
-  ): Promise<Set<string>> {
-    const result = new Set<string>();
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      if (excludePaths.has(f.path)) continue;
-      try {
-        const content = await this.app.vault.cachedRead(f);
-        for (const name of findEmbeddedAttachmentBasenames(content)) result.add(name);
-      } catch {
-        // An unreadable file must not block the cleanup.
-      }
-    }
-    return result;
-  }
-
-  /**
-   * Deletes orphaned attachments first (basenames not in [stillReferenced])
-   * and then the note itself — both to the OS recycle bin so recovery is
-   * possible. Attachments are looked up via multiple candidate paths because
-   * Obsidian's metadataCache skips dot-prefixed folders (`.attachments/`).
-   */
-  private async trashNoteWithOrphanedAttachments(
-    file: TFile,
-    stillReferenced: Set<string>,
-  ): Promise<void> {
-    try {
-      const content = await this.app.vault.cachedRead(file);
-      for (const name of findEmbeddedAttachmentBasenames(content)) {
-        if (stillReferenced.has(name)) continue;
-        await this.trashAttachmentByBasename(file, name);
-      }
-    } catch {
-      // Cleanup failures must not block the note deletion.
-    }
-    await this.app.fileManager.trashFile(file);
-  }
-
-  private async trashAttachmentByBasename(noteFile: TFile, basename: string): Promise<void> {
-    // After the vault-wide refcount check, every orphan copy of this basename
-    // (effective assets folder AND legacy `.attachments` locations) may go to
-    // the trash. Identical basenames can legitimately exist in both a visible
-    // folder and the hidden `.attachments/`, so we must not stop at the first
-    // hit. A failure on one candidate must not block the others or the note.
-    const candidates = this.plugin.resolveAssetCandidates(noteFile, basename);
-    for (const c of candidates) {
-      try {
-        if (c.file) {
-          await this.app.fileManager.trashFile(c.file);
-        } else if (await this.app.vault.adapter.exists(c.vaultPath)) {
-          await this.app.vault.adapter.trashSystem(c.vaultPath);
-        }
-      } catch {
-        // try next candidate
-      }
-    }
   }
 
   /**
@@ -970,6 +926,8 @@ export class JotDropView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.excalidrawPreviewsInstance?.dispose();
+    this.excalidrawPreviewsInstance = null;
     // Pending reads may finish after the view is closed; they must not render.
     this.renderRequest++;
     this.cardRead = null;
@@ -1671,14 +1629,23 @@ export class JotDropView extends ItemView {
     const folder = normalizePath(this.plugin.settings.notesFolder);
     const archive = normalizePath(this.plugin.settings.archiveFolder);
     const showArchived = this.plugin.settings.showArchived;
+    let conflicts = 0;
 
     const all = this.app.vault.getMarkdownFiles().filter((f) => {
       const inArchive = isUnder(f.path, archive);
       const inFolder = isUnder(f.path, folder);
+      if ((inFolder || inArchive) && !isTrashed(f.path, folder) && conflictOriginal(f.path)) { conflicts++; return false; }
       if (!inFolder) return false;
+      if (isTrashed(f.path, folder) || conflictOriginal(f.path)) return false;
       if (inArchive && !showArchived) return false;
       return true;
     });
+    if (this.conflictsButton) {
+      this.conflictsButton.dataset.conflicts = String(conflicts);
+      const label = conflicts ? l(`Syncthing conflicts: ${conflicts}`, `Конфликтов Syncthing: ${conflicts}`) : l("Syncthing conflicts", "Конфликты Syncthing");
+      this.conflictsButton.setAttribute("aria-label", label);
+      this.conflictsButton.title = label;
+    }
 
     const sorted = sortFiles(all, this.plugin.settings.sortMode);
 
@@ -1769,8 +1736,11 @@ export class JotDropView extends ItemView {
     }));
     quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
 
-    const titleText = extractTitle(content, file.basename);
-    const previewText = extractPreview(content);
+    const directDrawing = this.excalidrawPreviews.isDrawingFile(file);
+    const drawingLink = directDrawing ? null : drawingEmbedBeforeImage(stripFrontmatter(content));
+    const drawing = directDrawing ? file : drawingLink ? this.excalidrawPreviews.resolveDrawing(drawingLink, file) : null;
+    const titleText = directDrawing ? drawingTitle(file.basename) : extractTitle(content, file.basename);
+    const previewText = directDrawing ? "" : extractPreview(content);
     const urls = extractUrls(content);
 
     const body = cardEl.createDiv({ cls: "jotdrop-card-body" });
@@ -1788,6 +1758,7 @@ export class JotDropView extends ItemView {
     let openedAttachment = attachment;
     body.addEventListener("click", () => {
       if (this.selectionMode) { this.toggleSelect(file.path); return; }
+      if (directDrawing) { void this.app.workspace.getLeaf("tab").openFile(file); return; }
       this.openEditModal(file, openedAttachment);
     });
 
@@ -1797,6 +1768,8 @@ export class JotDropView extends ItemView {
       let current = attachment;
       const fallbacks = [...attachment.fallbacks];
       img.src = current.resourcePath;
+      img.dataset.vaultPath = current.vaultPath;
+      img.dataset.embedLink = thumbnailBasename!;
       img.alt = "";
       img.loading = "lazy";
       // Keep large photo decodes off the main thread during scrolling.
@@ -1809,10 +1782,24 @@ export class JotDropView extends ItemView {
           current = { resourcePath: next.resourcePath, file: null, vaultPath: next.vaultPath, fallbacks: [] };
           openedAttachment = current;
           img.src = next.resourcePath;
+          img.dataset.vaultPath = next.vaultPath;
         } else {
           thumbWrap.remove();
         }
       });
+    } else if (drawing) {
+      const figure = body.createDiv({ cls: "jotdrop-card-thumbnail" });
+      const exported = this.excalidrawPreviews.findExport(drawing);
+      if (exported?.fresh) {
+        figure.createEl("img", { attr: { src: this.app.vault.getResourcePath(exported.file), alt: l("Excalidraw drawing", "Рисунок Excalidraw"), loading: "lazy" } });
+      } else {
+        figure.createSpan({ text: l("Excalidraw drawing", "Рисунок Excalidraw") });
+        void this.excalidrawPreviews.render(drawing).then(url => {
+          if (!figure.isConnected) return;
+          const source = url ?? (exported ? this.app.vault.getResourcePath(exported.file) : null);
+          if (source) { figure.empty(); figure.createEl("img", { attr: { src: source, alt: l("Excalidraw drawing", "Рисунок Excalidraw"), loading: "lazy" } }); }
+        });
+      }
     } else if (audioBasename) {
       const banner = body.createDiv({ cls: "jotdrop-card-voice-banner" });
       banner.setAttribute("aria-label", t("voice_memo_card_label"));
@@ -1976,14 +1963,15 @@ export class JotDropView extends ItemView {
           .setTitle(t("action_delete"))
           .setIcon("trash-2")
           .onClick(async () => {
-            const stillReferenced = await this.collectReferencedAttachmentBasenames(
-              new Set([file.path]),
-            );
-            await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
+            await this.plugin.localNotes.trash(file);
             new Notice(t("notice_deleted", file.basename));
             this.plugin.refreshViews({ kind: "files", paths: [file.path] });
           })
       );
+      menu.addItem(item => item.setTitle(l("Add photo or recognize text", "Добавить фото или распознать текст")).setIcon("camera")
+        .onClick(() => this.plugin.captureTools.pickPhoto(file)));
+      menu.addItem(item => item.setTitle(l("Add drawing", "Добавить рисунок")).setIcon("pencil")
+        .onClick(() => this.plugin.captureTools.draw(file)));
       menu.showAtMouseEvent(e);
     });
   }
@@ -2276,7 +2264,7 @@ function sortFiles(files: TFile[], mode: string): TFile[] {
  * checklists) are stripped. Result is truncated to `TITLE_MAX_WORDS` with "…".
  * Empty title → fall back to `fallback` (filename).
  */
-function extractTitle(content: string, fallback: string): string {
+export function extractTitle(content: string, fallback: string): string {
   const body = stripFrontmatter(content);
   const lines = body.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
   for (const line of lines) {

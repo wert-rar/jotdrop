@@ -3,6 +3,8 @@ import type JotDropPlugin from "./main";
 import { EditNoteModal } from "./edit";
 import { voidAsync } from "./asyncUtil";
 import { t } from "./i18n";
+import { localText as l } from "./i18n";
+import { runLocal } from "./noteTools";
 
 /**
  * Modal that shows the card's associated image at full size. Opened when the
@@ -50,6 +52,13 @@ export class LightboxModal extends Modal {
     });
 
     const actions = root.createDiv({ cls: "jotdrop-lightbox-actions" });
+    if (this.vaultPath && this.plugin.captureTools.canEditDrawing(this.vaultPath)) {
+      const drawingBtn = actions.createEl("button", { text: l("Edit drawing", "Редактировать рисунок") });
+      drawingBtn.addEventListener("click", () => runLocal(async () => {
+        await this.plugin.captureTools.editDrawing(this.noteFile, this.vaultPath!);
+        this.close();
+      }));
+    }
 
     const editBtn = actions.createEl("button", {
       text: t("action_edit_note"),
